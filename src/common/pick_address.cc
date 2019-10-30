@@ -25,6 +25,9 @@
 #include "common/numa.h"
 
 #include <netdb.h>
+#include <string>
+#include <string.h>
+#include <vector>
 
 #define dout_subsys ceph_subsys_
 
@@ -508,7 +511,12 @@ int get_iface_numa_node(
   const std::string& iface,
   int *node)
 {
-  string fn = std::string("/sys/class/net/") + iface + "/device/numa_node";
+  string ifa = iface;
+  int pos = ifa.find(":");
+  if (pos > -1) {
+    ifa.erase(pos);
+  }
+  string fn = std::string("/sys/class/net/") + ifa + "/device/numa_node";
 
   int r = 0;
   char buf[1024];
@@ -532,6 +540,65 @@ int get_iface_numa_node(
   }
   r = 0;
  out:
+  ::close(fd);
+  return r;
+}
+
+int get_bond_numa_node(
+  const std::string& bond,
+  int *node)
+{
+  string bd = bond;
+  int pos = bd.find(":");
+  if (pos > -1) {
+        bd.erase(pos);
+  }
+  string fn = std::string("/sys/class/net/") + bd + "/bonding/slaves";
+
+  int fd = ::open(fn.c_str(), O_RDONLY);
+  if (fd < 0) {
+    return -errno;
+  }
+  int r = 0;
+  char buf[1024];
+  int bond_node = -1;
+  r = safe_read(fd, buf, sizeof(buf));
+  if (r < 0) {
+    ::close(fd);
+    return r;
+  }
+
+  buf[r] = 0;
+  while (r > 0 && ::isspace(buf[--r])) {
+    buf[r] = 0;
+  }
+  std::vector<std::string> sv;
+  char *q,*p = strtok_r(buf, " ", &q);
+  while (p != NULL)
+  {
+    sv.push_back(p);
+    p = strtok_r(NULL, " ", &q);
+  }
+  for (std::vector<std::string>::const_iterator iter = sv.begin();
+                                                 iter != sv.end();
+                                                         ++iter) {
+    int bn = -1;
+    r = get_iface_numa_node(*iter, &bn);
+    if (r >= 0) {
+      if (bond_node == -1 || bn == bond_node) {
+        bond_node = bn;
+      } else {
+        *node = -2;
+        ::close(fd);
+        return 0;
+      }
+    } else {
+      ::close(fd);
+      return -1;
+    }
+  }
+  r = 0;
+  *node = bond_node;
   ::close(fd);
   return r;
 }

@@ -79,4 +79,8 @@ int get_iface_numa_node(
   const std::string& iface,
   int *node);
 
+int get_bond_numa_node(
+  const std::string& bond,
+  int *node);
+
 #endif
