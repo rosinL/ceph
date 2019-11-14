@@ -410,6 +410,7 @@ if(HAVE_QATZIP)
 endif()
 
 if(WITH_DPDK)
+  list(APPEND ceph_common_deps "PRIVATE")
   list(APPEND ceph_common_deps common_async_dpdk)
 endif()
 
@@ -423,10 +424,10 @@ if(WITH_BLUESTORE_PMEM)
 endif()
 
 add_library(common STATIC ${ceph_common_objs})
-target_link_libraries(common ${ceph_common_deps})
+target_link_libraries(common INTERFACE ${ceph_common_deps})
 
 add_library(ceph-common SHARED ${ceph_common_objs})
-target_link_libraries(ceph-common ${ceph_common_deps})
+target_link_libraries(ceph-common PUBLIC ${ceph_common_deps})
 # appease dpkg-shlibdeps
 set_target_properties(ceph-common PROPERTIES
   SOVERSION 2
