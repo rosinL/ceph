@@ -16,15 +16,15 @@ add_executable(ceph_test_async_networkstack
   test_async_networkstack.cc
   $<TARGET_OBJECTS:unit-main>
   )
-target_link_libraries(ceph_test_async_networkstack global ${CRYPTO_LIBS} ${BLKID_LIBRARIES} ${CMAKE_DL_LIBS} ${UNITTEST_LIBS})
+target_link_libraries(ceph_test_async_networkstack global-static ${CRYPTO_LIBS} ${BLKID_LIBRARIES} ${CMAKE_DL_LIBS} ${UNITTEST_LIBS})
 
 #ceph_perf_msgr_server
 add_executable(ceph_perf_msgr_server perf_msgr_server.cc)
-target_link_libraries(ceph_perf_msgr_server os global ${UNITTEST_LIBS})
+target_link_libraries(ceph_perf_msgr_server os global-static ${UNITTEST_LIBS})
 
 #ceph_perf_msgr_client
 add_executable(ceph_perf_msgr_client perf_msgr_client.cc)
-target_link_libraries(ceph_perf_msgr_client os global ${UNITTEST_LIBS})
+target_link_libraries(ceph_perf_msgr_client os global-static ${UNITTEST_LIBS})
 
 # test_userspace_event
 if(HAVE_DPDK)
