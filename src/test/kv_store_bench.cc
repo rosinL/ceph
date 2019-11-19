@@ -420,7 +420,7 @@ int KvStoreBench::test_teuthology_aio(next_gen_t distr,
       break;
     }
 
-    delete cb_args;
+    //delete cb_args;
   }
 
   op_avail.wait(l, [this] { return ops_in_flight <= 0; });
