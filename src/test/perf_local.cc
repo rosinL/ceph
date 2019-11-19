@@ -612,10 +612,21 @@ static inline void prefetch(const void *object, uint64_t num_bytes)
 }
 #endif
 
+#if defined(__aarch64__) 
+static inline void prefetch(const void *object, uint64_t num_bytes)
+{
+  uint64_t offset = reinterpret_cast<uint64_t>(object) & 0x3fUL;
+  const char *p = reinterpret_cast<const char*>(object) - offset;
+  for (uint64_t i = 0; i < offset + num_bytes; i += 64) {
+    __asm__("PRFM PLDL1KEEP, [%x[v],%[c]]"::[v]"r"(p), [c]"r"(i));
+  }
+}
+#endif
+
 // Measure the cost of the prefetch instruction.
 double perf_prefetch()
 {
-#ifdef HAVE_SSE
+#if defined(HAVE_SSE) || defined(__aarch64__)
   uint64_t total_ticks = 0;
   int count = 10;
   char buf[16 * 64];
