@@ -713,6 +713,53 @@ double sfence()
 #endif
 }
 
+// Measure the cost of isb
+double perf_isb()
+{
+#if defined(__aarch64__)
+  int count = 1000000;
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("isb sy" ::: "memory");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#else
+  return -1;
+#endif
+}
+
+// Measure the cost of a dmb instruction.
+double perf_dmb()
+{
+#if defined(__aarch64__)
+  int count = 1000000;
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("dmb st" ::: "memory");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#else
+  return -1;
+#endif
+}
+
+// Measure the cost of a dsb instruction.
+double perf_dsb()
+{
+#if defined(__aarch64__)
+  int count = 1000000;
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("dsb st" ::: "memory");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#else
+  return -1;
+#endif
+}
 // Measure the cost of acquiring and releasing a SpinLock (assuming the
 // lock is initially free).
 double test_spinlock()
@@ -950,6 +997,12 @@ TestInfo tests[] = {
     "Lfence instruction"},
   {"sfence", sfence,
     "Sfence instruction"},
+  {"isb", perf_isb,
+    "ISB instruction"},
+  {"dmb", perf_dmb,
+    "DMB instruction"},
+  {"dsb", perf_dsb,
+    "DSB instruction"},
   {"spin_lock", test_spinlock,
     "Acquire/release SpinLock"},
   {"spawn_thread", spawn_thread,
