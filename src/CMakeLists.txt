@@ -118,6 +118,11 @@ if(HAVE_INTEL)
     HAVE_BETTER_YASM_ELF64)
 endif()
 
+if(HAVE_ARM)
+  if(HAVE_ARMV8_SIMD)
+    set(HAVE_AARCH64_ASM_ELF64 1)
+  endif()
+endif()
 
 # require c++17
 set(CMAKE_CXX_STANDARD 17)
