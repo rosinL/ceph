@@ -45,6 +45,38 @@ namespace dpdk {
     return std::bitset<CHAR_BIT * sizeof(n)>{n}.count();
   }
 
+  static int xdigit2val(unsigned char c)
+  {
+    int val;
+
+    if (isdigit(c))
+      val = c - '0';
+    else if (isupper(c))
+      val = c - 'A' + 10;
+    else
+      val = c - 'a' + 10;
+    return val;
+  }
+
+  static int coremask_bitcount(const char *coremask)
+  {
+    int count = 0;
+
+    if (coremask[0] == '0' && ((coremask[1] == 'x')
+        || (coremask[1] == 'X')))
+      coremask += 2;
+
+    for (int i = 0; coremask[i] != '\0'; i++) {
+      char c = coremask[i];
+      if (isxdigit(c) == 0)
+        return 0;
+      int val = xdigit2val(c);
+      if (val)
+        count += bitcount(val);
+    }
+    return count;
+  }
+
   int eal::init(CephContext *c)
   {
     if (initialized) {
@@ -52,9 +84,8 @@ namespace dpdk {
     }
 
     bool done = false;
-    auto num = std::stoull(c->_conf.get_val<std::string>("ms_dpdk_coremask"),
-                           nullptr, 16);
-    unsigned int coremaskbit = bitcount(num);
+    auto coremask = c->_conf.get_val<std::string>("ms_dpdk_coremask");
+    unsigned int coremaskbit = coremask_bitcount(coremask.c_str());
 
     ceph_assert(coremaskbit > c->_conf->ms_async_op_threads);
 
