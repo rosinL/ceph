@@ -554,11 +554,8 @@ int get_iface_numa_node(
     break;
   case IFACE_BOND_PORT:
     std::vector<std::string> sv;
-    char *q, *p = strtok_r(buf, " ", &q);
-    while (p != NULL) {
-      sv.push_back(p);
-      p = strtok_r(NULL, " ", &q);
-    }
+    std::string ifacestr = buf;
+    get_str_vec(ifacestr, " ", sv);
     for (auto& iter : sv) {
       int bn = -1;
       r = get_iface_numa_node(iter, &bn);
