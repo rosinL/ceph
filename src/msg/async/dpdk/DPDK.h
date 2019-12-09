@@ -748,8 +748,9 @@ class DPDKDevice {
   unsigned _home_cpu;
   bool _use_lro;
   bool _enable_fc;
-  std::vector<uint8_t> _redir_table;
+  std::vector<uint16_t> _redir_table;
   rss_key_type _rss_key;
+  struct rte_flow *_flow;
   bool _is_i40e_device = false;
   bool _is_vmxnet3_device = false;
 
@@ -800,7 +801,7 @@ class DPDKDevice {
   DPDKDevice(CephContext *c, uint8_t port_idx, uint16_t num_queues, bool use_lro, bool enable_fc):
       cct(c), _port_idx(port_idx), _num_queues(num_queues),
       _home_cpu(0), _use_lro(use_lro),
-      _enable_fc(enable_fc) {
+      _enable_fc(enable_fc), _flow(nullptr) {
     _queues = std::vector<std::unique_ptr<DPDKQueuePair>>(_num_queues);
     /* now initialise the port we will use */
     int ret = init_port_start();
@@ -823,6 +824,8 @@ class DPDKDevice {
   }
 
   ~DPDKDevice() {
+    if (_flow)
+	rte_flow_destroy(_port_idx, _flow, nullptr);
     rte_eth_dev_stop(_port_idx);
   }
 
