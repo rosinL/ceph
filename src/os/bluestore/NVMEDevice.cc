@@ -550,6 +550,37 @@ static void attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
   ctx->manager->register_ctrlr(ctx->trid, ctrlr, &ctx->driver);
 }
 
+static int hex2dec(unsigned char c)
+{
+  if (isdigit(c))
+    return c - '0';
+  else if (isupper(c))
+    return c - 'A' + 10;
+  else
+    return c - 'a' + 10;
+}
+
+static int find_fisrt_bitset(const char *buf)
+{
+  int pos = 0;
+
+  if (buf[0] == '0' && ((buf[1] == 'x')
+      || (buf[1] == 'X')))
+    buf += 2;
+
+  int i = strlen(buf);
+  for (i = i - 1; i >= 0; i--) {
+    char c = buf[i];
+    if (isxdigit(c) == 0)
+      return -EINVAL;
+    int val = hex2dec(c);
+    if (val)
+      return pos + ffs(val);
+    pos += 4;
+  }
+  return 0;
+}
+
 int NVMEManager::try_get(const spdk_nvme_transport_id& trid, SharedDriverData **driver)
 {
   std::lock_guard l(lock);
@@ -561,17 +592,9 @@ int NVMEManager::try_get(const spdk_nvme_transport_id& trid, SharedDriverData **
   }
 
   auto coremask_arg = g_conf().get_val<std::string>("bluestore_spdk_coremask");
-  int m_core_arg = -1;
-  try {
-    auto core_value = stoull(coremask_arg, nullptr, 16);
-    m_core_arg = ffsll(core_value);
-  } catch (const std::logic_error& e) {
-    derr << __func__ << " invalid bluestore_spdk_coremask: "
-	 << coremask_arg << dendl;
-    return -EINVAL;
-  }
+  int m_core_arg = find_fisrt_bitset(coremask_arg.c_str());
   // at least one core is needed for using spdk
-  if (m_core_arg == 0) {
+  if (m_core_arg <= 0) {
     derr << __func__ << " invalid bluestore_spdk_coremask, "
 	 << "at least one core is needed" << dendl;
     return -ENOENT;
