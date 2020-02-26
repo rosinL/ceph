@@ -415,7 +415,6 @@ Infiniband::QueuePair* RDMADispatcher::get_qp(uint32_t qp)
 
 void RDMADispatcher::enqueue_dead_qp(uint32_t qpn)
 {
-  std::lock_guard l{lock};
   auto it = qp_conns.find(qpn);
   if (it == qp_conns.end()) {
     lderr(cct) << __func__ << " QP [" << qpn << "] is not registered." << dendl;
@@ -462,6 +461,7 @@ void RDMADispatcher::handle_tx_event(ibv_wc *cqe, int n)
 
     // If it's beacon WR, enqueue the QP to be destroyed later
     if (response->wr_id == BEACON_WRID) {
+      std::lock_guard l{lock};
       enqueue_dead_qp(response->qp_num);
       continue;
     }
