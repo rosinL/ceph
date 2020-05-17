@@ -67,7 +67,23 @@ int RGWPutObj_Compress::process(bufferlist&& in, uint64_t logical_offset)
     }
     // end of compression stuff
   }
-  return Pipe::process(std::move(out), logical_offset);
+
+  if (out.length()) {
+    in_len = in.length();
+    out_len = out.length();
+    if (in_len >= out_len) {
+      logical_offset = logical_offset >= (in_len - out_len) ? (logical_offset + out_len - in_len) : 0;
+    } else {
+      logical_offset = logical_offset + out_len - in_len;
+    }
+    compressed_ofs = logical_offset;
+  } else {
+    compressed_ofs = logical_offset + out_len - in_len;
+    in_len = 0;
+    out_len = 0;
+  }
+
+  return Pipe::process(std::move(out), compressed_ofs);
 }
 
 //----------------RGWGetObj_Decompress---------------------
