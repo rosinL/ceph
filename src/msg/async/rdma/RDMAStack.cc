@@ -179,7 +179,7 @@ void RDMADispatcher::handle_async_event()
              conn->fault();
              if (qp) {
                 if (!cct->_conf->ms_async_rdma_cm)
-                enqueue_dead_qp(qpn);
+                enqueue_dead_qp_lockless(qpn);
              }
           }
         }
@@ -413,9 +413,8 @@ Infiniband::QueuePair* RDMADispatcher::get_qp(uint32_t qp)
   return get_qp_lockless(qp);
 }
 
-void RDMADispatcher::enqueue_dead_qp(uint32_t qpn)
+void RDMADispatcher::enqueue_dead_qp_lockless(uint32_t qpn)
 {
-  std::lock_guard l{lock};
   auto it = qp_conns.find(qpn);
   if (it == qp_conns.end()) {
     lderr(cct) << __func__ << " QP [" << qpn << "] is not registered." << dendl;
@@ -425,6 +424,12 @@ void RDMADispatcher::enqueue_dead_qp(uint32_t qpn)
   dead_queue_pairs.push_back(qp);
   qp_conns.erase(it);
   --num_qp_conn;
+}
+
+void RDMADispatcher::enqueue_dead_qp(uint32_t qpn)
+{
+  std::lock_guard l{lock};
+  enqueue_dead_qp_lockless(qpn);
 }
 
 void RDMADispatcher::schedule_qp_destroy(uint32_t qpn)
