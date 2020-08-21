@@ -113,7 +113,7 @@ void RDMAConnectedSocketImpl::get_wc(std::vector<ibv_wc> &w)
 int RDMAConnectedSocketImpl::activate()
 {
   qp->get_local_cm_meta().peer_qpn = qp->get_peer_cm_meta().local_qpn;
-  if (qp->modify_qp_to_rtr() != 0)
+  if (qp->get_qp()->state != IBV_QPS_RTR && qp->modify_qp_to_rtr() != 0)
     return -1;
 
   if (qp->modify_qp_to_rts() != 0)
@@ -191,9 +191,33 @@ int RDMAConnectedSocketImpl::handle_connection_established(bool need_set_fault) 
   return 0;
 }
 
+int RDMAConnectedSocketImpl::do_establish() {
+  reconnect_fd = 0;
+  int r = activate();
+  if (r) {
+    if (++retry_cnt < 3) {
+      reconnect_fd = worker->center.create_time_event(1000000, established_handler);
+      return -EAGAIN;
+    }
+    ceph_assert(0);
+  }
+
+  retry_cnt = 0;
+  r = qp->send_cm_meta(cct, tcp_fd);
+  if (r < 0) {
+    ldout(cct, 1) << __func__ << " send client ack failed." << dendl;
+    dispatcher->perf_logger->inc(l_msgr_rdma_handshake_errors);
+    fault();
+  }
+  return r;
+}
+
 void RDMAConnectedSocketImpl::handle_connection() {
   ldout(cct, 20) << __func__ << " QP: " << local_qpn << " tcp_fd: " << tcp_fd << " notify_fd: " << notify_fd << dendl;
-  int r = qp->recv_cm_meta(cct, tcp_fd);
+  int r;
+  if (retry_cnt)
+    goto connecting;
+  r = qp->recv_cm_meta(cct, tcp_fd);
   if (r <= 0) {
     if (r != -EAGAIN) {
       dispatcher->perf_logger->inc(l_msgr_rdma_handshake_errors);
@@ -209,33 +233,21 @@ void RDMAConnectedSocketImpl::handle_connection() {
     return;
   }
 
+connecting:
   if (!is_server) {// first time: cm meta sync + ack from server
-    if (!connected) {
-      r = activate();
-      ceph_assert(!r);
-    }
+    r = do_establish();
+    if (r)
+      return;
     notify();
-    r = qp->send_cm_meta(cct, tcp_fd);
-    if (r < 0) {
-      ldout(cct, 1) << __func__ << " send client ack failed." << dendl;
-      dispatcher->perf_logger->inc(l_msgr_rdma_handshake_errors);
-      fault();
-    }
   } else {
     if (qp->get_peer_cm_meta().peer_qpn == 0) {// first time: cm meta sync from client
       if (active) {
         ldout(cct, 10) << __func__ << " server is already active." << dendl;
         return ;
       }
-      r = activate();
-      ceph_assert(!r);
-      r = qp->send_cm_meta(cct, tcp_fd);
-      if (r < 0) {
-        ldout(cct, 1) << __func__ << " server ack failed." << dendl;
-        dispatcher->perf_logger->inc(l_msgr_rdma_handshake_errors);
-        fault();
-        return ;
-      }
+    r = do_establish();
+    if (r)
+      return;
     } else { // second time: cm meta ack from client
       connected = 1;
       ldout(cct, 10) << __func__ << " handshake of rdma is done. server connected: " << connected << dendl;
@@ -535,6 +547,11 @@ void RDMAConnectedSocketImpl::fin() {
 }
 
 void RDMAConnectedSocketImpl::cleanup() {
+  if (reconnect_fd) {
+    worker->center.delete_time_event(reconnect_fd);
+    reconnect_fd = 0;
+  }
+
   if (read_handler && tcp_fd >= 0) {
     (static_cast<C_handle_connection_read*>(read_handler))->close();
     worker->center.submit_to(worker->center.get_id(), [this]() {
