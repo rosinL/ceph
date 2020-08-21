@@ -178,6 +178,8 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   uint32_t peer_qpn = 0;
   uint32_t local_qpn = 0;
   int connected;
+  uint64_t reconnect_fd = 0;
+  int retry_cnt = 0;
   int error;
   std::shared_ptr<Infiniband> ib;
   std::shared_ptr<RDMADispatcher> dispatcher;
@@ -226,6 +228,7 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   ssize_t submit(bool more);
   int activate();
   void fin();
+  int do_establish();
   void handle_connection();
   int handle_connection_established(bool need_set_fault = true);
   void cleanup();
