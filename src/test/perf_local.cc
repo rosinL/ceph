@@ -664,11 +664,19 @@ static inline void serialize() {
         : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
         : "a" (1U));
 }
+#elif defined(__aarch64__)
+static inline void serialize() {
+    unsigned int s1 = 0;
+    __asm volatile("mrs %0, midr_el1"
+        : "=r"(s1)
+        :
+	:"memory");
+}
 #endif
 
 // Measure the cost of cpuid
 double perf_serialize() {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
   int count = 1000000;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
@@ -681,14 +689,22 @@ double perf_serialize() {
 #endif
 }
 
-// Measure the cost of an lfence instruction.
-double lfence()
-{
+static inline void rmb() {
 #ifdef HAVE_SSE2
+  __asm__ __volatile__("lfence" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ __volatile__("dmb ishld" ::: "memory")
+#endif
+}
+
+// Measure the cost of an rmb memory barrier instruction.
+double perf_rmb()
+{
+#if defined(HAVE_SSE2) || defined(__aarch64__)
   int count = 1000000;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    __asm__ __volatile__("lfence" ::: "memory");
+    rmb();
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
@@ -697,14 +713,46 @@ double lfence()
 #endif
 }
 
-// Measure the cost of an sfence instruction.
-double sfence()
+static inline void mb() {
+#ifdef HAVE_SSE2
+  __asm__ __volatile__("mfence" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ __volatile__("dmb ish" ::: "memory")
+#endif
+}
+
+// Measure the cost of an mb memory barrier instruction.
+double perf_mb()
 {
-#ifdef HAVE_SSE
+#if defined(HAVE_SSE2) || defined(__aarch64__)
   int count = 1000000;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    __asm__ __volatile__("sfence" ::: "memory");
+    mb();
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#else
+  return -1;
+#endif
+}
+
+static inline void wmb() {
+#ifdef HAVE_SSE
+  __asm__ __volatile__("sfence" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ __volatile__("dmb ishst" ::: "memory")
+#endif
+}
+
+// Measure the cost of an wmb memory barrier instruction.
+double perf_wmb()
+{
+#if defined(HAVE_SSE) || defined(__aarch64__)
+  int count = 1000000;
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    wmb();
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
@@ -946,10 +994,12 @@ TestInfo tests[] = {
     "Prefetch instruction"},
   {"serialize", perf_serialize,
     "serialize instruction"},
-  {"lfence", lfence,
-    "Lfence instruction"},
-  {"sfence", sfence,
-    "Sfence instruction"},
+  {"perf_rmb", perf_rmb,
+    "Load op memory barrier instruction"},
+  {"perf_wmb", perf_wmb,
+    "Store op memory barrier instruction"},
+  {"perf_mb", perf_mb,
+    "All load and store op memory barrier instruction"},
   {"spin_lock", test_spinlock,
     "Acquire/release SpinLock"},
   {"spawn_thread", spawn_thread,
