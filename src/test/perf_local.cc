@@ -381,6 +381,20 @@ double div32()
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
+#elif defined(__aarch64__)
+  int count = 1000000;
+  uint64_t start = Cycles::rdtsc();
+  uint64_t numerator = 0xa5a5a5a555aa55aaU;
+  uint32_t divisor = 0xaa55aa55U;
+  uint32_t quotient;
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("udiv %[q], %[n], %[d]" :
+                         [q]"=r"(quotient) :
+                         [n]"r"(numerator), [d]"r"(divisor) :
+                         "cc");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
 #else
   return -1;
 #endif
