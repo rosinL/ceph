@@ -3,7 +3,7 @@
 
 #include "io_uring.h"
 
-#if defined(HAVE_LIBURING) && defined(__x86_64__)
+#if defined(HAVE_LIBURING) && defined(__x86_64__) || defined(HAVE_LIBURING) && defined(__aarch64__)
 
 #include "liburing.h"
 #include <sys/epoll.h>
@@ -223,7 +223,7 @@ bool ioring_queue_t::supported()
   return true;
 }
 
-#else // #if defined(HAVE_LIBURING) && defined(__x86_64__)
+#else // #if defined(HAVE_LIBURING) && defined(__x86_64__) || defined(HAVE_LIBURING) && defined(__aarch64__)
 
 struct ioring_data {};
 
@@ -264,4 +264,4 @@ bool ioring_queue_t::supported()
   return false;
 }
 
-#endif // #if defined(HAVE_LIBURING) && defined(__x86_64__)
+#endif // #if defined(HAVE_LIBURING) && defined(__x86_64__) || defined(HAVE_LIBURING) && defined(__aarch64__)
