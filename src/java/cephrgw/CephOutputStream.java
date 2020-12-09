@@ -19,7 +19,7 @@
  * files in Ceph.
  */
 
-package org.apache.hadoop.fs.ceph;
+package org.apache.hadoop.fs.cephrgw;
 
 
 import java.io.IOException;
@@ -34,7 +34,7 @@ import com.ceph.rgw.CephRgwAdapter;
 
 /**
  * <p>
- * An {@link OutputStream} for a CephFileSystem and corresponding
+ * An {@link OutputStream} for a CephRgwFileSystem and corresponding
  * Ceph instance.
  *
  * TODO:
@@ -116,10 +116,6 @@ public class CephOutputStream extends OutputStream {
       bufUsed += remaining;
       off += remaining;
       len -= remaining;
-
-     bufUsed += remaining;
-     off += remaining;
-     len -= remaining;
    
      if (buffer.length == bufUsed)
        flushBuffer();

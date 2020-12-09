@@ -9,7 +9,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 
 /**
- * The CephFs implementation of AbstractFileSystem.
+ * The CephRgw implementation of AbstractFileSystem.
  * This impl delegates to the old FileSystem
  */
 public class CephRgw extends DelegateToFileSystem {

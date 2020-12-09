@@ -205,7 +205,7 @@ public class CephRgwFileSystem extends FileSystem {
     ceph.lstat(path, stat);
 
     FileStatus status = new FileStatus(stat.size, stat.isDir(),
-          ceph.get_file_replication(path), stat.blksize, stat.m_time,
+          ceph.getDefaultReplication(), stat.blksize, stat.m_time,
           stat.a_time, new FsPermission((short) stat.mode),
           System.getProperty("user.name"), null, path.makeQualified(this));
 
@@ -229,27 +229,29 @@ public class CephRgwFileSystem extends FileSystem {
     else if(len == 0)
        return new FileStatus[0];
 
-      FileStatus[] status = new FileStatus[len];
-      for (int i = 0; i < len; i++) {
-	CephStat stat = stats.get(i);
-        status[i] = new FileStatus(stat.size, stat.isDir(),
-          ceph.get_file_replication(path), stat.blksize, stat.m_time,
-          stat.a_time, new FsPermission((short) stat.mode),
-          System.getProperty("user.name"), null, makeQualified(new Path(path, names.get(i))));
-      }
-      return status;
+    FileStatus[] status = new FileStatus[len];
+    for (int i = 0; i < len; i++) {
+      CephStat stat = stats.get(i);
+      status[i] = new FileStatus(stat.size, stat.isDir(),
+        ceph.getDefaultReplication(), stat.blksize, stat.m_time,
+        stat.a_time, new FsPermission((short) stat.mode),
+        System.getProperty("user.name"), null, makeQualified(new Path(path, names.get(i))));
+    }
+    names.clear();
+    stats.clear();
+    return status;
     }
   }
 
-  @Overrid
+  @Override
   public void setPermission(Path path, FsPermission permission) throws IOException {
     path = makeAbsolute(path);
 
-    CephStat stat = new CephStat(permission.toShort())
+    CephStat stat = new CephStat(permission.toShort());
     ceph.setattr(path, stat, CephRgwAdapter.SETATTR_MODE);
   }
 
-  @Overrid
+  @Override
   public void setTimes(Path path, long mtime, long atime) throws IOException {
     path = makeAbsolute(path);
 
@@ -257,11 +259,11 @@ public class CephRgwFileSystem extends FileSystem {
     int mask = 0;
 
     if (mtime != -1) {
-      mask |= CephMount.SETATTR_MTIME;
+      mask |= CephRgwAdapter.SETATTR_MTIME;
     }
 
     if (atime != -1) {
-      mask |= CephMount.SETATTR_ATIME;
+      mask |= CephRgwAdapter.SETATTR_ATIME;
     }
 
     ceph.setattr(path, stat, mask);
@@ -294,13 +296,13 @@ public class CephRgwFileSystem extends FileSystem {
       progress.progress();
     }
 
-    int flags = CephRgwAdapter.O_WRONLY | CephRgwAdapter.O_CREATE;
+    int flags = CephRgwAdapter.O_WRONLY | CephRgwAdapter.O_CREAT;
 
     if (exists) {
       if (overwrite)
         flags |= CephRgwAdapter.O_TRUNC;
       else
-        throw new FileAlreadyExistsException():
+        throw new FileAlreadyExistsException();
     } else {
       Path parent = path.getParent();
       if (parent != null)
@@ -346,7 +348,6 @@ public class CephRgwFileSystem extends FileSystem {
   * @see #setPermission(Path, FsPermission)
   * @deprecated API only for 0.20-append
   */
-  @Deprecated
   public FSDataOutputStream createNonRecursive(Path path, FsPermission permission,
       boolean overwrite,
       int bufferSize, short replication, long blockSize,

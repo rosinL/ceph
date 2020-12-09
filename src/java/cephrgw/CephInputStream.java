@@ -18,7 +18,7 @@
  * Implements the Hadoop FS interfaces to allow applications to store
  * files in Ceph.
  */
-package org.apache.hadoop.fs.ceph;
+package org.apache.hadoop.fs.cephrgw;
 
 
 import java.io.IOException;
@@ -32,7 +32,7 @@ import com.ceph.rgw.CephRgwAdapter;
 
 /**
  * <p>
- * An {@link FSInputStream} for a CephFileSystem and corresponding
+ * An {@link FSInputStream} for a CephRgwFileSystem and corresponding
  * Ceph instance.
  */
 public class CephInputStream extends FSInputStream {
@@ -52,9 +52,11 @@ public class CephInputStream extends FSInputStream {
   /**
    * Create a new CephInputStream.
    * @param conf The system configuration. Unused.
+   * @param cephfs CephFsProte
    * @param fh The filehandle provided by Ceph to reference.
    * @param flength The current length of the file. If the length changes
    * you will need to close and re-open it to access the new data.
+   * @param bufferSize the size of the buffer to be used.
    */
   public CephInputStream(Configuration conf, CephFsProto cephfs,
 	long fh, long flength, int bufferSize) {
@@ -86,13 +88,13 @@ public class CephInputStream extends FSInputStream {
   }
 
   private synchronized boolean fillBuffer() throws IOException {
-    bufValid = ceph.read(fileHandle, cephPos, buffer, buffer, length);
+    bufValid = ceph.read(fileHandle, cephPos, buffer, buffer.length);
     bufPos = 0;
     if (bufValid < 0) {
       int err = bufValid;
 
       bufValid = 0;
-      throw new IOException("Failed to fill read buffer! Error cod:" + err);
+      throw new IOException("Failed to fill read buffer! Error code:" + err);
     }
 
     cephPos += bufValid;
@@ -111,8 +113,9 @@ public class CephInputStream extends FSInputStream {
    */
   @Override
   public synchronized int available() throws IOException {
-    if (closed)
+    if (closed) {
       throw new IOException("file is closed");
+    }
     return (int) (fileLength - getPos());
   }
 
@@ -197,6 +200,7 @@ public class CephInputStream extends FSInputStream {
       return -1;
     }
 
+    len = Math.min(len, available());
     int totalRead = 0;
     int initialLen = len;
     int read;

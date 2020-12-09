@@ -37,17 +37,11 @@ abstract class CephFsProto {
   abstract void initialize(URI uri, Configuration conf) throws IOException;
   abstract long __open(Path path, int flags, int mode) throws IOException;
   abstract long open(Path path, int flags, int mode) throws IOException;
-  abstract long open(Path path, int flags, int mode, int stripe_unit,
-      int stripe_count, int object_size, String data_pool) throws IOException;
-  abstract void fstat(long fd, CephStat stat) throws IOException;
   abstract void lstat(Path path, CephStat stat) throws IOException;
   abstract void statfs(Path path, CephStatVFS stat) throws IOException;
   abstract void unlink(Path path) throws IOException;
-  abstract void rmdir(Path path) throws IOException;
-  abstract int listdir(Path path, LinkedList<String> name, LinkedList<CephStat> stat) throws IOException;
+  abstract int listdir(Path path, LinkedList<String> names, LinkedList<CephStat> stats) throws IOException;
   abstract void setattr(Path path, CephStat stat, int mask) throws IOException;
-  abstract void chmod(Path path, int mode) throws IOException;
-  abstract long lseek(long fd, long offset, int whence) throws IOException;
   abstract void close(long fd) throws IOException;
   abstract void shutdown() throws IOException;
   abstract boolean rename(Path src, Path dst) throws IOException;
