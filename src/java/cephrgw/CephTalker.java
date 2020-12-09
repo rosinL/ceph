@@ -18,7 +18,7 @@
  * Wraps a number of native function calls to communicate with the Ceph
  * filesystem.
  */
-package org.apache.hadoop.fs.ceph;
+package org.apache.hadoop.fs.cephrgw;
 
 import java.io.IOException;
 import java.net.URI;

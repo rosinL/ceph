@@ -28,7 +28,7 @@ import java.net.URISyntaxException;
 import java.net.InetAddress;
 import java.util.EnumSet;
 import java.lang.Math;
-import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.TreeMap;
 
 import org.apache.commons.logging.Log;
@@ -115,7 +115,7 @@ public class CephRgwFileSystem extends FileSystem {
     CephStat stat = new CephStat();
     ceph.lstat(path, stat);
 
-    CephInputStream istream = new CephInputStream(getConf(), ceph, fd, stat, size, bufferSize);
+    CephInputStream istream = new CephInputStream(getConf(), ceph, fd, stat.size, bufferSize);
     return new FSDataInputStream(istream);
   }
 
@@ -130,24 +130,11 @@ public class CephRgwFileSystem extends FileSystem {
   }
 
   public FSDataOutputStream append(Path path, int bufferSize, Progressable progress) throws IOException {
-    path =makeAbsolute(path);
-
-    if (progress != null) {
-      progress.progress();
-    }
-
-    long fd = ceph.open(path, CephRgwAdapter.O_WRONLY|CephRgwAdapter, O_APPEND, 0);
-
-    if (progress != null) {
-      progress.progress();
-    }
-
-    CephOutputStream ostream = new CephOutputStream(getConf(), ceph, fd, buffersize);
-    return new FSDataOutputStream(ostream, statistics)
+      throw new UnsupportedOperationException("Append is not supported " + "by CephRgwFileSystem");
   }
 
-  public Path getWorkingDirectory()
-    return workingDir();
+  public Path getWorkingDirectory() {
+    return workingDir;
   }
 
   @Override
@@ -167,15 +154,28 @@ public class CephRgwFileSystem extends FileSystem {
   public boolean mkdirs(Path path, FsPermission perms) throws IOException {
     path = makeAbsolute(path);
 
-    boolean result = false;
-    try {
-      ceph.mkdirs(path, (int) perms.toShort());
-      result = true;
-    } catch (CephFileAlreadyExistsException e) {
-      result = true;
+    Path parent = path.getParent();
+    if (parent == null) {
+	return true;
+    }
+    
+    if (exists(path)) {
+	if (getFileStatus(path).isFile()) {
+		throw new CephFileAlreadyExistsException(path.toString());
+	}
+	return true;
     }
 
-    return result;
+    boolean ret = mkdirs(parent, perms);
+    if (!ret)
+	return ret;
+    try {
+      ret = ceph.mkdirs(path, (int) perms.toShort());
+    } catch (CephFileAlreadyExistsException e) {
+      ret = true;
+    }
+
+    return ret;
   }
 
   /**
@@ -221,19 +221,23 @@ public class CephRgwFileSystem extends FileSystem {
   public FileStatus[] listStatus(Path path) throws IOException {
     path = makeAbsolute(path);
 
-    if (isFile(path))
-      return new FileStatus[] { getFileStatus(path) };
+    LinkedList<String> names = new LinkedList<String>();
+    LinkedList<CephStat> stats = new LinkedList<CephStat>();
+    int len = ceph.listdir(path, name, stat);
+    if (len < 0)
+      throw new FileNotFoundException("File " + path + " does not exist.");
+    else if(len == 0)
+       return new FileStatus[0];
 
-    String[] dirlist = ceph.listdir(path);
-    if (dirlist != null) {
-      FileStatus[] status = new FileStatus[dirlist.length];
-      for (int i = 0; i < status.length; i++) {
-        status[i] = getFileStatus(new Path(path, dirlist[i]));
+      FileStatus[] status = new FileStatus[len];
+      for (int i = 0; i < len; i++) {
+	CephStat stat = stats.get(i);
+        status[i] = new FileStatus(stat.size, stat.isDir(),
+          ceph.get_file_replication(path), stat.blksize, stat.m_time,
+          stat.a_time, new FsPermission((short) stat.mode),
+          System.getProperty("user.name"), null, makeQualified(new Path(path, names.get(i))));
       }
       return status;
-    }
-    else {
-      throw new FileNotFoundException("File " + path + " does not exist.");
     }
   }
 
@@ -241,8 +245,7 @@ public class CephRgwFileSystem extends FileSystem {
   public void setPermission(Path path, FsPermission permission) throws IOException {
     path = makeAbsolute(path);
 
-    CephStat stat = new CephStat();
-    stat.mode = permission.toShort();
+    CephStat stat = new CephStat(permission.toShort())
     ceph.setattr(path, stat, CephRgwAdapter.SETATTR_MODE);
   }
 
@@ -250,22 +253,36 @@ public class CephRgwFileSystem extends FileSystem {
   public void setTimes(Path path, long mtime, long atime) throws IOException {
     path = makeAbsolute(path);
 
-    CephStat stat = new CephStat();
+    CephStat stat = new CephStat(mtime, atime);
     int mask = 0;
 
     if (mtime != -1) {
       mask |= CephMount.SETATTR_MTIME;
-      stat.m_time = mtime;
     }
 
     if (atime != -1) {
       mask |= CephMount.SETATTR_ATIME;
-      stat.a_time = atime;
     }
 
     ceph.setattr(path, stat, mask);
   }
 
+  /**
+  * Opens an FSDataOutputStream at the indicated Path with write-progress
+  * reporting. Same as create(), except fails if parent directory doesn't
+  * already exist.
+  * @param path the file name to open
+  * @param permission
+  * @param overwrite if a file with this name already exists, then if true,
+  * the file will be overwritten, and if false an error will be thrown.
+  * @param bufferSize the size of the buffer to be used.
+  * @param replication required block replication for the file.
+  * @param blockSize
+  * @param progress
+  * @throws IOException
+  * @see #setPermission(Path, FsPermission)
+  * @deprecated API only for 0.20-append
+  */
   public FSDataOutputStream create(Path path, FsPermission permission,
 	boolean overwrite, int bufferSize, short replication, long blockSize,
 	Progressable progress) throws IOException {
@@ -281,14 +298,14 @@ public class CephRgwFileSystem extends FileSystem {
 
     if (exists) {
       if (overwrite)
-        flags != CephRgwAdapter.O_TRUNC;
+        flags |= CephRgwAdapter.O_TRUNC;
       else
         throw new FileAlreadyExistsException():
     } else {
       Path parent = path.getParent();
       if (parent != null)
         if (!mkdirs(parent))
-          throw new IOexception("mkdirs failed for " + parent.toString());
+          throw new IOException("mkdirs failed for " + parent.toString());
     }
 
     if (progress != null) {
@@ -296,7 +313,7 @@ public class CephRgwFileSystem extends FileSystem {
     }
 
     if (blockSize > Integer.MAX_VALUE) {
-      blockSize = Interger.MAX_VALUE;
+      blockSize = Integer.MAX_VALUE;
       LOG.info("blockSize too large. Rounding down to " + blockSize);
     }
 
@@ -305,11 +322,11 @@ public class CephRgwFileSystem extends FileSystem {
 
     long fd = ceph.open(path, flags, (int)permission.toShort());
 
-    if (progress != null)
+    if (progress != null) {
       progress.progress();
     }
 
-    OutPutStream ostream = new CephOutputStream(getConf(), ceph, fd, bufferSize);
+    OutputStream ostream = new CephOutputStream(getConf(), ceph, fd, bufferSize);
     return new FSDataOutputStream(ostream, statistics);
   }
 
@@ -358,6 +375,7 @@ public class CephRgwFileSystem extends FileSystem {
    */
   @Override
   public boolean rename(Path src, Path dst) throws IOException {
+    boolean ret = false;
     src = makeAbsolute(src);
     dst = makeAbsolute(dst);
 
