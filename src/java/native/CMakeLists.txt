@@ -17,10 +17,7 @@ endif(WITH_CEPHFS_JAVA)
 
 if(WITH_CEPHRGW_JAVA)
   add_library(cephrgw_jni SHARED
-    libcephrgw_jni.cc
-    ScopedLocalRef.h
-    JniConstants.cpp
-    JniConstants.h)
+    libcephrgw_jni.cc)
   set_target_properties(cephrgw_jni PROPERTIES
     VERSION 1.0.0
     SOVERSION 1)

@@ -1,4 +1,23 @@
+// -*- mode:Java; tab-width:2; c-basic-offset:2; indent-tabs-mode:t -*-
 
+/**
+ *
+ * Licensed under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied. See the License for the specific language governing
+ * permissions and limitations under the License.
+ *
+ *
+ * Implements the Hadoop FS interfaces to allow applications to store
+ * files in Ceph.
+ */
 package org.apache.hadoop.fs.cephrgw;
 
 import java.io.IOException;
@@ -49,11 +68,13 @@ public class CephRgwFileSystem extends FileSystem {
     setConf(conf);
   }
 
+  /**
+   * Create an absolute path using the working directory.
+   */
   private Path makeAbsolute(Path path) {
     if (path.isAbsolute()) {
       return path;
     }
-    LOG.error("non abs path " + path + " workingdir " + workingDir);
     return new Path(workingDir, path);
   }
 
@@ -77,6 +98,15 @@ public class CephRgwFileSystem extends FileSystem {
     this.workingDir = getHomeDirectory();
   }
 
+  /**
+   * Open a Ceph file and attach the file handle to an FSDataInputStream.
+   * @param path The file to open
+   * @param bufferSize Ceph does internal buffering; but you can buffer in
+   *   the Java code too if you like.
+   * @return FSDataInputStream reading from the given path.
+   * @throws IOException if the path DNE or is a
+   * directory, or there is an error getting data to set up the FSDataInputStream.
+   */
   public FSDataInputStream open(Path path, int bufferSize) throws IOException {
     path = makeAbsolute(path);
 
@@ -89,6 +119,10 @@ public class CephRgwFileSystem extends FileSystem {
     return new FSDataInputStream(istream);
   }
 
+  /**
+   * Close down the CephFileSystem. Runs the base-class close method
+   * and then kills the Ceph client itself.
+   */
   @Override
   public void close() throws IOException {
     super.close();
@@ -121,6 +155,14 @@ public class CephRgwFileSystem extends FileSystem {
     workingDir = makeAbsolute(dir);
   }
 
+  /**
+   * Create a directory and any nonexistent parents. Any portion
+   * of the directory tree can exist without error.
+   * @param path The directory path to create
+   * @param perms The permissions to apply to the created directories.
+   * @return true if successful, false otherwise
+   * @throws IOException if the path is a child of a file.
+   */
   @Override
   public boolean mkdirs(Path path, FsPermission perms) throws IOException {
     path = makeAbsolute(path);
@@ -136,28 +178,46 @@ public class CephRgwFileSystem extends FileSystem {
     return result;
   }
 
-
+  /**
+   * Create a directory and any nonexistent parents. Any portion
+   * of the directory tree can exist without error. 
+   * Apply umask from conf
+   * @param f The directory path to create
+   * @return true if successful, false otherwise
+   * @throws IOException if the path is a child of a file.
+   */
   @Override
   public boolean mkdirs(Path f) throws IOException {
     return mkdirs(f, FsPermission.getDirDefault().applyUMask(FsPermission.getUMask(getConf())));
-  } 
- 
+  }
+
+  /**
+   * Get stat information on a file. This does not fill owner or group, as
+   * Ceph's support for these is a bit different than HDFS'.
+   * @param path The path to stat.
+   * @return FileStatus object containing the stat information.
+   * @throws FileNotFoundException if the path could not be resolved.
+   */
   public FileStatus getFileStatus(Path path) throws IOException {
     path = makeAbsolute(path);
 
-    String pathStr = Path.getPathWithoutSchemeAndAuthority(path).toString();
-    LOG.error("lstat path " + path + " ceph path " + pathStr);
     CephStat stat = new CephStat();
     ceph.lstat(path, stat);
 
-    FileStatus = new FileStatus(stat.size, stat.isDir(),
- 	ceph.getDefaultReplication(), stat.blksize, stat.m_time,
-	stat.a_time(), new FsPermission((short) stat.mode),
-	System.getProperty("user.name"), null, path.makeQualified(this));
+    FileStatus status = new FileStatus(stat.size, stat.isDir(),
+          ceph.get_file_replication(path), stat.blksize, stat.m_time,
+          stat.a_time, new FsPermission((short) stat.mode),
+          System.getProperty("user.name"), null, path.makeQualified(this));
 
-    reutn status;
+    return status;
   }
 
+  /**
+   * Get the FileStatus for each listing in a directory.
+   * @param path The directory to get listings from.
+   * @return FileStatus[] containing one FileStatus for each directory listing;
+   *         null if path does not exist.
+   */
   public FileStatus[] listStatus(Path path) throws IOException {
     path = makeAbsolute(path);
 
@@ -168,10 +228,9 @@ public class CephRgwFileSystem extends FileSystem {
     if (dirlist != null) {
       FileStatus[] status = new FileStatus[dirlist.length];
       for (int i = 0; i < status.length; i++) {
-        LOG.error("list path " + path + " lsdir " + dirlist[i]);
         status[i] = getFileStatus(new Path(path, dirlist[i]));
       }
-      reutn status;
+      return status;
     }
     else {
       throw new FileNotFoundException("File " + path + " does not exist.");
@@ -189,18 +248,18 @@ public class CephRgwFileSystem extends FileSystem {
 
   @Overrid
   public void setTimes(Path path, long mtime, long atime) throws IOException {
-    path = makeabsolute(path);
-    
+    path = makeAbsolute(path);
+
     CephStat stat = new CephStat();
     int mask = 0;
 
-    if (mtime != -1)
-      mask |= CephRgwAdapter.SETATTR_MTIME; 
+    if (mtime != -1) {
+      mask |= CephMount.SETATTR_MTIME;
       stat.m_time = mtime;
     }
 
-    if (atime != -1)
-      mask |= CephRgwAdapter.SETATTR_ATIME;
+    if (atime != -1) {
+      mask |= CephMount.SETATTR_ATIME;
       stat.a_time = atime;
     }
 
@@ -254,29 +313,51 @@ public class CephRgwFileSystem extends FileSystem {
     return new FSDataOutputStream(ostream, statistics);
   }
 
-  public FSDataOutputStream createNonRecursive(Path path, FsPermission permission, 
-	boolean overwrite,
-	int buffersize, short replication, long blockSize, 
-	Progressable progress) throws IOException {
+  /**
+  * Opens an FSDataOutputStream at the indicated Path with write-progress
+  * reporting. Same as create(), except fails if parent directory doesn't
+  * already exist.
+  * @param path the file name to open
+  * @param permission
+  * @param overwrite if a file with this name already exists, then if true,
+  * the file will be overwritten, and if false an error will be thrown.
+  * @param bufferSize the size of the buffer to be used.
+  * @param replication required block replication for the file.
+  * @param blockSize
+  * @param progress
+  * @throws IOException
+  * @see #setPermission(Path, FsPermission)
+  * @deprecated API only for 0.20-append
+  */
+  @Deprecated
+  public FSDataOutputStream createNonRecursive(Path path, FsPermission permission,
+      boolean overwrite,
+      int bufferSize, short replication, long blockSize,
+      Progressable progress) throws IOException {
 
     path = makeAbsolute(path);
 
     Path parent = path.getParent();
 
-   if (parent != null)
-     CephStat = new CephStat();
-     ceph.lstat(parent, stat);
-     if (stat.isFile())
-       throw new FileAlreadyExistsException(parent.toString());
-     }
+    if (parent != null) {
+      CephStat stat = new CephStat();
+      ceph.lstat(parent, stat); // handles FileNotFoundException case
+      if (stat.isFile())
+        throw new FileAlreadyExistsException(parent.toString());
+    }
 
-   return this.create(path, permission, overwrite,
-	bufferSize, replication, blockSize, progress);
+    return this.create(path, permission, overwrite,
+        bufferSize, replication, blockSize, progress);
   }
 
+  /**
+   * Rename a file or directory.
+   * @param src The current path of the file/directory
+   * @param dst The new name for the path.
+   * @return true if the rename succeeded, false otherwise.
+   */
   @Override
-  public boolean rename(Path src Path dst) throws IOException {
-    boolean ret = false;
+  public boolean rename(Path src, Path dst) throws IOException {
     src = makeAbsolute(src);
     dst = makeAbsolute(dst);
 
@@ -292,14 +373,15 @@ public class CephRgwFileSystem extends FileSystem {
   }
 
   @Deprecated
-  public boolean delete(Path path) throws IOException {
-    return delete(path, false);
-  }
+	public boolean delete(Path path) throws IOException {
+		return delete(path, false);
+	}
 
   @Override
   public boolean delete(Path path, boolean recursive) throws IOException {
     path = makeAbsolute(path);
 
+    /* path exists? */
     FileStatus status;
     try {
       status = getFileStatus(path);
@@ -307,11 +389,13 @@ public class CephRgwFileSystem extends FileSystem {
       return false;
     }
 
+    /* we're done if its a file */
     if (status.isFile()) {
       ceph.unlink(path);
       return true;
     }
 
+    /* get directory contents */
     FileStatus[] dirlist = listStatus(path);
     if (dirlist == null)
       return false;
@@ -332,7 +416,7 @@ public class CephRgwFileSystem extends FileSystem {
   public short getDefaultReplication() {
     return ceph.getDefaultReplication();
   }
-  
+
   @Override
   public long getDefaultBlockSize() {
     return getConf().getLong(
@@ -342,17 +426,14 @@ public class CephRgwFileSystem extends FileSystem {
 
   @Override
   public FsStatus getStatus(Path p) throws IOException {
-    CephStatVFS stat = new CephStatVFS();
-    ceph.statfs(p, stat);
-    
-    FsStatus status = new FsStatus(stat.bsize * stat.blocks,
- 	stat.bsize * (stat.blocks - stat.bavail),
-	stat.bsize * stat.bavail);
-    return status;
+	  CephStatVFS stat = new CephStatVFS();
+	  ceph.statfs(p, stat);
+
+	  FsStatus status = new FsStatus(stat.bsize * stat.blocks, 
+			  	stat.bsize * (stat.blocks - stat.bavail),
+			  	stat.bsize * stat.bavail);
+	  return status;
   }
 }
- 
-
-
 
 
