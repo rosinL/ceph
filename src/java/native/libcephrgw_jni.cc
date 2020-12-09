@@ -33,13 +33,15 @@
 
 #include "com_ceph_rgw_CephRgwAdapter.h"
 
-#define CEPH_STAT_CP "com/ceph/rgw/CephStat"
-#define CEPH_STAT_VFS_CP "com/ceph/rgw/CEphStatVFS"
+#define CEPH_RGW_ADAPTER_CLASS "com/ceph/rgw/CephRgwAdapter"
+#define CEPH_LISTDIR_HANDLEER_CLASS "com/ceph/rgw/CephRgwAdapter$ListDirHandler"
+#define CEPH_STAT_CLASS "com/ceph/rgw/CephStat"
+#define CEPH_STAT_VFS_CLASS "com/ceph/rgw/CephStatVFS"
 #define CEPH_FILEEXISTS_CP "com/ceph/rgw/CephFileAlreadyExistsException"
 
 
 /*
- * Flags to open(). must be synchronized with CephMount.java
+ * Flags to open(). must be synchronized with CephRgwAdapter.java
  *
  * There are two versions of flags: the version in Java and the version in the
  * target library (e.g. libc or libcephfs). We control the Java values and map
@@ -57,7 +59,7 @@
 #define JAVA_O_DIRECTORY 128
 
 /*
- * Whence flags for seek(). sync with CephMount.java if changed.
+ * Whence flags for seek(). sync with CephRgwAdapter.java if changed.
  *
  * Mapping of SEEK_* done in seek function.
  */
@@ -66,7 +68,7 @@
 #define JAVA_SEEK_END 3
 
 /*
- * File attribute flags. sync with CephMount.java if changed.
+ * File attribute flags. sync with CephRgwAdapter.java if changed.
  */
 #define JAVA_SETATTR_MODE  1
 #define JAVA_SETATTR_UID   2
@@ -75,14 +77,14 @@
 #define JAVA_SETATTR_ATIME 16
 
 /*
- * Setxattr flags. sync with CephMount.java if changed.
+ * Setxattr flags. sync with CephRgwAdapter.java if changed.
  */
 #define JAVA_XATTR_CREATE   1
 #define JAVA_XATTR_REPLACE  2
 #define JAVA_XATTR_NONE     3
 
 /*
- * flock flags. sync with CephMount.java if changed.
+ * flock flags. sync with CephRgwAdapter.java if changed.
  */
 #define JAVA_LOCK_SH 1
 #define JAVA_LOCK_EX 2
@@ -132,6 +134,7 @@ static inline int fixup_attr_mask(jint jmask)
 	return mask;
 }
 
+static jclass cephstat_cls;
 /* Cached field IDs for com.ceph.fs.CephStat */
 static jfieldID cephstat_mode_fid;
 static jfieldID cephstat_uid_fid;
@@ -141,9 +144,6 @@ static jfieldID cephstat_blksize_fid;
 static jfieldID cephstat_blocks_fid;
 static jfieldID cephstat_a_time_fid;
 static jfieldID cephstat_m_time_fid;
-static jfieldID cephstat_is_file_fid;
-static jfieldID cephstat_is_directory_fid;
-static jfieldID cephstat_is_symlink_fid;
 
 /* Cached field IDs for com.ceph.fs.CephStatVFS */
 static jfieldID cephstatvfs_bsize_fid;
@@ -153,6 +153,10 @@ static jfieldID cephstatvfs_bavail_fid;
 static jfieldID cephstatvfs_files_fid;
 static jfieldID cephstatvfs_fsid_fid;
 static jfieldID cephstatvfs_namemax_fid;
+
+static jmethodID listdir_handler_mid;
+static jfieldID bucket_fh_fid;
+static jfieldID root_fh_fid;
 
 static CephContext *cct = nullptr;
 
@@ -223,17 +227,21 @@ static void handle_error(JNIEnv* env, int rc)
 	THROW(env, "java/io/IOException", strerror(-rc));
 }
 
-#define CHECK_ARG_NULL(v, m, r) do { \
-	if (!(v)) { \
-		cephThrowNullArg(env, (m)); \
-		return (r); \
-	} } while (0)
+#define CHECK_ARG_NULL(v, m, r)		   \
+    do { 				   \
+	if (!(v)) { 			   \
+		cephThrowNullArg(env, (m));\
+		return (r);                \
+       }				   \
+    } while (0)
 
-#define CHECK_ARG_BOUNDS(c, m, r) do { \
-	if ((c)) { \
+#define CHECK_ARG_BOUNDS(c, m, r)		\
+    do {   					\
+	if ((c)) { 				\
 		cephThrowIndexBounds(env, (m)); \
-		return (r); \
-	} } while (0)
+		return (r); 			\
+	}					\
+    } while (0)
 
 static void setup_field_ids(JNIEnv *env, jclass clz)
 {
@@ -253,10 +261,11 @@ static void setup_field_ids(JNIEnv *env, jclass clz)
  *   GETFID(cephstat, mode, I) gets translated into
  *     cephstat_mode_fid = env->GetFieldID(cephstat_cls, "mode", "I");
  */
-#define GETFID(clz, field, type) do { \
+#define GETFID(clz, field, type)						 \
+    do { 									 \
 	clz ## _ ## field ## _fid = env->GetFieldID(clz ## _cls, #field, #type); \
-	if ( ! clz ## _ ## field ## _fid ) \
-		return; \
+	if ( ! clz ## _ ## field ## _fid ) 					 \
+		return; 							 \
 	} while (0)
 
 	/* Cache CephStat fields */
@@ -273,9 +282,6 @@ static void setup_field_ids(JNIEnv *env, jclass clz)
 	GETFID(cephstat, blocks, J);
 	GETFID(cephstat, a_time, J);
 	GETFID(cephstat, m_time, J);
-	GETFID(cephstat, is_file, Z);
-	GETFID(cephstat, is_directory, Z);
-	GETFID(cephstat, is_symlink, Z);
 
 	/* Cache CephStatVFS fields */
 
@@ -292,6 +298,9 @@ static void setup_field_ids(JNIEnv *env, jclass clz)
 	GETFID(cephstatvfs, namemax, J);
 
 #undef GETFID
+
+	root_fh_fid = env->GetFieldID(clz, "rootFH", "J");
+	bucket_fh_fid = env->GetFieldID(clz, "bucketFH", "J");
 }
 
 
@@ -301,14 +310,13 @@ JNIEXPORT void JNICALL native_initialize
 	setup_field_ids(env, clz);
 }
 
-JNIEXPORT jint JNICALL Java_com_ceph_rgw_CephRgwAdapter_ceph_lcreate
-	(JNIEnv *env, jclass clz, jobject j_rgw_adapter, jstring j_arg)
+JNIEXPORT jint JNICALL native_ceph_create(JNIEnv *env, jclass clz, jstring j_arg)
 {
 	librgw_t rgw_h = NULL;
 	char *c_arg = NULL;
-	int rgt;
+	int ret;
 
-	CHECK_ARG_NULL(j_rgw_adapter, "@mount is null", -1);
+	CHECK_ARG_NULL(j_arg, "@j_arg is null", -1);
 
 	if (j_arg) {
 		c_arg = (char *)env->GetStringUTFChars(j_arg, NULL);
@@ -329,34 +337,47 @@ JNIEXPORT jint JNICALL Java_com_ceph_rgw_CephRgwAdapter_ceph_lcreate
 	return ret;
 }
 
-JNIEXPORT jlong JNICALL native_ceph_mount
-	(JNIEnv *env, jclass clz, jstring j_uid, jstring j_accessKey, jstring j_secretKey, jstring j_root)
+JNIEXPORT jlong JNICALL native_ceph_mount(JNIEnv *env, jclass clz, jobect j_rgw_adaper,
+    jstring j_uid, jstring j_access, jstring j_secret, jstring j_root)
 {
+	struct rgw_file_handle *bucket_fh;
+	const char * c_uid = env->GetStringUTFChars(j_uid, NULL);
+	const char * c_access = env->GetStringUTFChars(j_access, NULL);
+	const char * c_secret = env->GetStringUTFChars(j_secret, NULL);
+	const char * c_root = env->GetStringUTFChars(j_root, NULL);
 	struct rgw_fs *rgw_fs;
+	struct stat st;
 	int ret;
 
-	struct rgw_file_handle *rgw_fh;
-	const char * c_uid = env-GetStringUTFChars(j_uid, NULL);
-	const char * c_accessKey = env-GetStringUTFChars(j_accessKey, NULL);
-	const char * c_secretKey = env-GetStringUTFChars(j_secretKey, NULL);
-	const char * c_root = env-GetStringUTFChars(j_root, NULL);
-
 	ldout(cct, 10) << "jni: ceph_mount: " << (c_root ? c_root: "<NULL>") << dendl;
-	ret = rgw_mount2((librgw_t)cct, c_uid, c_accessKey, c_secretKey, c_root, &rgw_fs, RGW_MOUNT_FLAG_NONE);
+	ret = rgw_mount2((librgw_t)cct, c_uid, c_access, c_secret, "/", &rgw_fs, RGW_MOUNT_FLAG_NONE);
 	ldout(cct, 10) << "jni: ceph_mount: exit ret" << ret << dendl;
 	env->ReleaseStringUTFChars(j_uid , c_uid);
-	env->ReleaseStringUTFChars(j_accessKey , c_accessKey);
-	env->ReleaseStringUTFChars(j_secretKey , c_secretKey);
+	env->ReleaseStringUTFChars(j_access, c_access);
+	env->ReleaseStringUTFChars(j_secret, c_secret);
 
 	if (ret) {
 		handle_error(env, ret);
 		return ret;
 	}
+	ret = rgw_lookup(rgw_fs, rgw_fs->root_fh, c_root, &bucket_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
+	if (ret) {
+	    st.st_mode = 0777;
+	    ret = rgw_mkdir(rgw_fs, rgw_fs->root_fh, c_root, &st, RGW_SETATTR_MODE, &bucket_fh, RGW_MKDIR_FLAG_NONE);
+	}
+	if (ret) {
+		handle_error(env, ret);
+		rgw_umount(rgw_fs, RGW_UMOUNT_FLAG_NONE);
+		return ret;
+	}
 
+	env->SetLongField(j_adapter, root_fh_fid, (long)rgw_fs->root_fh);
+	env->SetLongField(j_adapter, bucket_fh_fid, (long)bucket_fh);
+	
 	return (jlong)rgw_fs;
 }
 
-JNIEXPORT jint JNICALL native_ceph_umount
+JNIEXPORT jint JNICALL native_ceph_unmount
 	(JNIEnv *env, jclass clz, jlong j_rgw_fs)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
@@ -390,9 +411,10 @@ JNIEXPORT jint JNICALL native_ceph_release
 
 
 JNIEXPORT jint JNICALL native_ceph_statfs
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path, jobject j_cephstatvfs)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jobject j_cephstatvfs)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
+	struct rgw_file_handle *fh = (struct rgw_file_handle *)j_fh;
 	struct rgw_file_handle *rgw_fh;
 	struct rgw_statvfs vfs_st;
 	const char *c_path;
@@ -408,7 +430,7 @@ JNIEXPORT jint JNICALL native_ceph_statfs
 	}
 
 	ldout(cct, 10) << "jni:statfs: path " << c_path << dendl;
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
+	ret = rgw_lookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
 	if (ret < 0) {
 		handle_error(env, ret);
 		return ret;
@@ -436,92 +458,87 @@ JNIEXPORT jint JNICALL native_ceph_statfs
 	return ret;
 }
 
+struct rgw_cb_data {
+  JNIEnv* env;
+  struct rgw_fs* rgw_fs;
+  struct rgw_file_handle *rgw_fh;
+  jobject handler;
+};
 
 static bool readdir_cb(const char *name, void *arg, uint64_t offset,
 	struct stat *st, uint32_t mask, uint32_t flags)
 {
-	list<string> * contents = (list<string> *)arg;
-	string *ent = new (std:nothrow) string(name);
-	if (!ent) {
-		return false;
-	}
+  struct rgw_cb_data *rgw_cb_data = (struct rgw_cb_data *)arg;
+  JNIEnv* env = rgw_cb_data->env;
+  struct rgw_fs* rgw_fs = rgw_cb_data->rgw_fs;
+  struct rgw_file_handle *dir_fh = rgw_cb_data->rgw_fh;
+  struct rgw_file_handle *rgw_fh;
+  jstring j_name;
+  int ret;
 
-	if (ent->compare(".") && ent->compare("..")) {
-		contents->push_back(*ent);
-	}
+  if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+      return true;
 
-	delete ent;
-	return true;
+  ret = rgw_lookup(rgw_fs, dir_fh, name, &rgw_fh, st, mask,
+	    RGW_LOOKUP_FLAG_RCB | (flags & RGW_LOOKUP_TYPE_FLAGS));
+  if(ret < 0)
+     return false;
+
+  ret = rgw_getattr(rgw_fs, rgw_fh, st, RGW_GETATTR_FLAG_NONE);
+  if(ret < 0)
+     return false;
+
+  j_name = env->NewStringUTF(name);
+  env->CallVoidMethod(rgw_cb_data->handler, listdir_handler_mid, j_name,
+      st->st_mode, st->st_uid, st->st_gid, st->st_size, st->st_blksize,
+      st->st_blocks, st->st_mtime * 1000, st->st_atime * 1000);
+  env->DeletedLocalRef(j_name);
+  return true;
 }
 
 
-JNIEXPORT jobjectArray JNICALL native_ceph_listdir
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path)
+JNIEXPORT jint JNICALL native_ceph_listdir
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jobject handler)
 {
-	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
-	struct rgw_file_handle *rgw_fh;
-	list<string>::iterator it;
-	list<string> contents;
-	jobjectArray dirlist;
-	const char *c_path;
-	jstring name;
-	uint64_t offset = 0;
-	bool eof = false;
-	int ret;
-	int i;
-
-	CHECK_ARG_NULL(j_path, "@path is null", NULL);
-	c_path = env->GetStringUTFChars(j_path, NULL);
-	if (!c_path) {
-		cephThrowInternal(env, "failed to pin memory");
-		return NULL;
-	}
-
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
-	if (ret < 0) {
-		handle_error(env, ret);
-		return NULL;
-	}
-
-	while (!eof) {
-		ldout(cct, 10) << "jni: listdir: getdnames: enter" << dendl;
-		ret = rgw_readdir(rgw_fs, rgw_fh, &offset, readdir_cb, &contents, &eof, RGW_READDIR_FLAG_NONE);
-		
-		ldout(cct, 10) << "jni: listdir: getdnames: exit ret " << ret << dendl;
-
-		if (ret < 0) 
-			break;
-	}
-
-	if (ret < 0) {
-		handle_error(env, ret);
-		goto out;
-	}
-
-	dirlist = env->NewObjectArray(contents.size(), env->FindClass("java/lang/String"), NULL);
-	if (!dirlist)
-		goto out;
-
-	for (i = 0, it = contents.begin(); it != contents.end(); ++it) {
-		name = env->NewStringUTF(it->c_str());
-		if (!name)
-			goto out;
-		env->SetObjectArrayElement(dirlist, i++, name);
-		if (env->ExceptionOccurred())
-			goto out;
-		env->DeleteLocalRef(name);
-	}
-
-	return dirlist;
-
-out:
-	env->ReleaseStringUTFChars(j_path, c_path);
-	return NULL;
+  struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
+  struct rgw_file_handle *rgw_fh;
+  struct rgw_cb_data rgw_cb_data;
+  const char *c_path;
+  uint64_t offset = 0;
+  bool eof = false;
+  int ret;
+  
+  CHECK_ARG_NULL(j_path, "@path is null", NULL);
+  c_path = env->GetStringUTFChars(j_path, NULL);
+  if (!c_path) {
+  	cephThrowInternal(env, "failed to pin memory");
+  	return NULL;
+  }
+  
+  ret = rgw_lookup(rgw_fs, (struct rgw_file_handle *)j_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
+  env->ReleaseStringUTFChars(j_path, c_path);
+  if (ret < 0) {
+  	handle_error(env, ret);
+  	return ret;
+  }
+  
+  rgw_cb_data.env = env;
+  rgw_cb_data.handler = handler;
+  rgw_cb_data.rgw_fs = rgw_fs;
+  rgw_cb_data.rgw_fh = rgw_fh;
+  while (!eof) {
+    ret = rgw_readdir(rgw_fs, rgw_fh, &offset, readdir_cb, &rgw_cb_data, &eof, RGW_READDIR_FLAG_NONE);
+    if (ret < 0) {
+      handle_error(env, ret);
+      break;
+    }
+  }
+  return ret; 
 }
 
 
 JNIEXPORT jint JNICALL native_ceph_unlink
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
 	const char *c_path;
@@ -536,7 +553,7 @@ JNIEXPORT jint JNICALL native_ceph_unlink
 	}
 
 	ldout(cct, 10) << "jni: unlink: path " << c_path << dendl;
-	ret = rgw_unlink(rgw_fs, rgw_fs->root-fh, c_path, RGW_UNLINK_FLAG_NONE);
+	ret = rgw_unlink(rgw_fs, (struct rgw_file_handle *)j_fh, c_path, RGW_UNLINK_FLAG_NONE);
 	
 	ldout(cct, 10) << "jni: unlink: exit ret " << ret << dendl;
 
@@ -550,9 +567,11 @@ JNIEXPORT jint JNICALL native_ceph_unlink
 
 
 JNIEXPORT jint JNICALL native_ceph_rename
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_src_path, jstring j_dst_path, jstring j_dst_name)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_src_fh, jstring j_src_path, jstring j_src_name, jlong j_dst_fh, jstring j_dst_path, jstring j_dst_name)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
+	struct rgw_file_handle *srcdir_fh = (struct rgw_file_handle *)j_src_fh;
+	struct rgw_file_handle *dstdir_fh = (struct rgw_file_handle *)j_dst_fh;
 	struct rgw_file_handle *src_fh;
 	struct rgw_file_handle *dst_fh;
 	const char *c_src_path;
@@ -571,13 +590,13 @@ JNIEXPORT jint JNICALL native_ceph_rename
 	c_dst_path = env->GetStringUTFChars(j_dst_path, NULL);
 	c_dst_name = env->GetStringUTFChars(j_dst_name, NULL);
 
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_src_path, &src_fh, nullptr, 0,
+	ret = rgw_lookup(rgw_fs, srcdir_fh, c_src_path, &src_fh, nullptr, 0,
 		RGW_LOOKUP_FLAG_NONE);
 	if (ret < 0) {
 		goto out;
 	}
 
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_dst_path, &dst_fh, nullptr, 0,
+	ret = rgw_lookup(rgw_fs, dstdir_fh, c_dst_path, &dst_fh, nullptr, 0,
 		RGW_LOOKUP_FLAG_NONE);
 	if (ret < 0) {
 		goto out;
@@ -586,7 +605,7 @@ JNIEXPORT jint JNICALL native_ceph_rename
 	ldout(cct, 10) << "jni:rename: from " << c_src_path << c_src_name
 		<< " to " << c_dst_path << c_dst_name << dendl;
 	ret = rgw_rename(rgw_fs, src_fh, c_src_name, dst_fh, c_dst_name, RGW_RENAME_FLAG_NONE);
-	ldout(cct, 10) << "jini: rename: exit ret " << ret << dendl;
+	ldout(cct, 10) << "jni: rename: exit ret " << ret << dendl;
 
 out:
 	env->ReleaseStringUTFChars(j_src_path, c_src_path);
@@ -601,10 +620,11 @@ out:
 }
 
 
-JNIEXPORT jint JNICALL native_ceph_mkdirs
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path, jstring j_name,  jint j_mode)
+JNIEXPORT jboolean JNICALL native_ceph_mkdirs
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jstring j_name,  jint j_mode)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
+	struct rgw_file_handle *dir_fh = (struct rgw_file_handle *)j_fh;
 	struct rgw_file_handle *rgw_fh;
 	struct rgw_file_handle *fh;
 	const char *c_path;
@@ -618,13 +638,13 @@ JNIEXPORT jint JNICALL native_ceph_mkdirs
 	c_name = env->GetStringUTFChars(j_name, NULL);
 	if (!c_path) {
 		cephThrowInternal(env, "failed to pin memory");
-		return -1;
+		return false;
 	}
 	
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
+	ret = rgw_lookup(rgw_fs, dir_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_CREATE | RGW_LOOKUP_FLAG_DIR);
 	if (ret < 0) {
 		handle_error(env, ret);
-		return ret;
+		return false;
 	}
 
 	ldout(cct, 10) << "jni: mkdirs: path " << c_path << " mode " << (int)j_mode << dendl;
@@ -639,7 +659,7 @@ JNIEXPORT jint JNICALL native_ceph_mkdirs
 	if (ret)
 		handle_error(env, ret);
 
-	return ret;
+	return !!ret;
 }
 
 static void fill_cephstat(JNIEnv *env, jobject j_cephstat, struct stat *st)
@@ -653,20 +673,13 @@ static void fill_cephstat(JNIEnv *env, jobject j_cephstat, struct stat *st)
 
 	env->SetLongField(j_cephstat, cephstat_m_time_fid, st->st_mtime * 1000);
 	env->SetLongField(j_cephstat, cephstat_a_time_fid, st->st_atime * 1000);
-
-	env->SetBooleanField(j_cephstat, cephstat_is_file_fid,
-		S_ISREG(st->st_mode) ? JNI_TRUE : JNI_FALSE);
-	env->SetBooleanField(j_cephstat, cephstat_is_directory_fid,
-		S_ISDIR(st->st_mode) ? JNI_TRUE : JNI_FALSE);
-	env->SetBooleanField(j_cephstat, cephstat_is_symlink_fid,
-		S_ISLNK(st->st_mode) ? JNI_TRUE : JNI_FALSE);
 }
 
 JNIEXPORT jint JNICALL native_ceph_lstat
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path, jstring j_name,  jint j_cephstat)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jstring j_name,  jint j_cephstat)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;	
-
+	struct rgw_file_handle *root_fh = (struct rgw_file_handle *)j_fh;
 	struct stat st;
 	struct rgw_file_handle *p_fh;
 	struct rgw_file_handle *rgw_fh;
@@ -681,8 +694,7 @@ JNIEXPORT jint JNICALL native_ceph_lstat
 	c-name = env->GetStringUTFChars(j_name, NULL);
 
 	ldout(cct, 10) << "jni: lstat: path " << c_path << " len " << strlen(c_path) << dendl;
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, 
-		RGW_LOOKUP_FLAG_RCB);
+	ret = rgw_lookup(rgw_fs, root_fh, c_path, &rgw_fh, nullptr, 0, RGW_LOOKUP_FLAG_NONE);
 	env->ReleaseStringUTFChars(j_path, c_path);
 	if (ret < 0) {
 		goto out;
@@ -701,10 +713,10 @@ out:
 }
 
 JNIEXPORT jint JNICALL native_ceph_setattr
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path, jint j_cephstat, jint j_mask)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jint j_cephstat, jint j_mask)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
-	
+	struct rgw_file_handle *root_fh = (struct rgw_file_handle *)j_fh;
 	struct rgw_file_handle *rgw_fh;
 	const char *c_path;
 	struct stat st;
@@ -719,7 +731,7 @@ JNIEXPORT jint JNICALL native_ceph_setattr
 		return -1;
 	}
 	ldout(cct, 10) << "jni: statfs: path " << c_path << dendl;
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0,
+	ret = rgw_lookup(rgw_fs, root_fh, c_path, &rgw_fh, nullptr, 0,
 		RGW_LOOKUP_FLAG_NONE);
 	if (ret < 0) {
 		handle_error(env, ret);
@@ -749,10 +761,10 @@ JNIEXPORT jint JNICALL native_ceph_setattr
 }
 
 JNIEXPORT jlong JNICALL native_ceph_open
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jstring j_path, jint j_flags, jint j_mode)
+	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fh, jstring j_path, jint j_flags, jint j_mode)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
-
+	struct rgw_file_handle *root_fh = (struct rgw_file_handle *)j_fh;
 	struct rgw_file_handle *rgw_fh;
 	const char *c_path;
 	int flags = fixup_open_flags(j_flags);
@@ -771,7 +783,7 @@ JNIEXPORT jlong JNICALL native_ceph_open
 	ldout(cct, 10) << "jni: open: path " << c_path << " flags " << flags 
 		<< " lookup_flags " << lookup_flags << dendl;
 	
-	ret = rgw_ookup(rgw_fs, rgw_fs->root_fh, c_path, &rgw_fh, nullptr, 0, lookup_flags);
+	ret = rgw_lookup(rgw_fs, root_fh, c_path, &rgw_fh, nullptr, 0, lookup_flags);
 	if (ret < 0) {
 		handle_error(env, ret);
 		return ret;
@@ -787,14 +799,13 @@ JNIEXPORT jlong JNICALL native_ceph_open
 	return (jlong)rgw_fh;
 }
 
-JNIEXPORT jint JNICALL native_ceph_close
-	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fd)
+JNIEXPORT jint JNICALL native_ceph_close(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fd)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
 	struct rgw_file_handle *rgw_fh = (struct rgw_file_handle *)j_fd;
 	int ret;
 	
-	ldout(cct, 10) << "jni: close: fd " << (long)j_fd << dendl;\
+	ldout(cct, 10) << "jni: close: fd " << (long)j_fd << dendl;
 	ret = rgw_close(rgw_fs, rgw_fh, RGW_CLOSE_FLAG_RELE);
 	ldout(cct, 10) << "jni: close: ret " << ret << dendl;
 
@@ -808,7 +819,7 @@ JNIEXPORT jlong JNICALL native_ceph_read
 	(JNIEnv *env, jclass clz, jlong j_rgw_fs, jlong j_fd, jlong j_offset, jbyteArray j_buf, jlong j_size)
 {
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
-	struct rgw_file_handle *fh + (struct rgw_file_handle *)j_fd;
+	struct rgw_file_handle *fh = (struct rgw_file_handle *)j_fd;
 	jboolean iscopy = JNI_FALSE;
 	size_t bytes_read;
 	jsize buf_size;
@@ -821,7 +832,7 @@ JNIEXPORT jlong JNICALL native_ceph_read
 	buf_size = env->GetArrayLength(j_buf);
 	CHECK_ARG_BOUNDS(j_size > buf_size, "@size > @buf.length", -1);
 
-	c_buf = env->GetByteArrayElements(j_buf, @iscopy);
+	c_buf = env->GetByteArrayElements(j_buf, &iscopy);
 	if (!c_buf) {
 		cephThrowInternal(env, "failed to pin memory");
 		return -1;
@@ -837,7 +848,7 @@ JNIEXPORT jlong JNICALL native_ceph_read
 		bytes_read = 0;
 	}
 
-	env->ReleaseBytesArrayElements(j_buf, c_buf, JNI_COMMIT);
+	env->ReleaseByteArrayElements(j_buf, c_buf, JNI_COMMIT);
 	if (iscopy) {
 		free(c_buf);
 	}
@@ -851,14 +862,15 @@ JNIEXPORT jlong JNICALL native_ceph_write
 	struct rgw_fs *rgw_fs = (struct rgw_fs *)j_rgw_fs;
 	struct rgw_file_handle *fh = (struct rgw_file_handle *)j_fd;
 	size_t bytes_written;
-`	jbyte *c_buf;
+        jsize buf_size;
+	jbyte *c_buf;
 	long ret;
 
 	CHECK_ARG_NULL(j_buf, "@buf is null", -1);
 	CHECK_ARG_BOUNDS(j_size < 0, "@size is negative", -1);
 
 	buf_size = env->GetArrayLength(j_buf);
-	CHECK_ARG_BOUNDS(j_size > buf_size, "@size > @buff.length", -1);
+	CHECK_ARG_BOUNDS(j_size > buf_size, "@size > @buf.length", -1);
 
 	c_buf = env->GetByteArrayElements(j_buf, 0);
 	if (!c_buf) {
@@ -900,3 +912,25 @@ JNIEXPORT jint JNICALL native_ceph_fsync
 
 	return ret;
 }
+
+static const JNINativeMethod gMethods[] = {
+  {"native_initialize", "()V", (void*)native_initialize}, 
+  {"native_ceph_create", "(Ljava/lang/String;)I", (void*)native_ceph_create}, 
+  {"native_ceph_mount", "(Lcom/ceph/rgw/CephRgwAdapter;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J",(void*)native_ceph_mount}, 
+  {"native_ceph_unmount", "(J)I", (void*)native_ceph_unmount},
+  {"native_ceph_release", "(J)I", (void*)native_ceph_release},
+  {"native_ceph_statfs", "(JJLjava/lang/String;Lcom/ceph/rgw/CephStatVFS;)I", (void*)native_ceph_statfs},
+  {"native_ceph_listdir", "(JJLjava/lang/String;Lcom/ceph/rgw/CephRgwAdapter$ListDirHandler;)I",(void*)native_ceph_listdir},
+  {"native_ceph_unlink", "(JJLjava/lang/String;)I", (void*)native_ceph_unlink},
+  {"native_ceph_rename", "(JJLjava/lang/String;Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;)I",(void*)native_ceph_rename},
+  {"native_ceph_mkdirs", "(JJLjava/lang/String;Ljava/lang/String;I)Z", (void*)native_ceph_mkdirs},
+  {"native_ceph_lstat", "(JJLjava/lang/String;Lcom/ceph/rgw/CephStat;)I", (void*)native_ceph_lstat},
+  {"native_ceph_setattr", "(JJLjava/lang/String;Lcom/ceph/rgw/CephStat;I)I", (void*)native_ceph_setattr},
+  {"native_ceph_open", "(JJLjava/lang/String;II)J", (void*)native_ceph_open},
+  {"native_ceph_close", "(JJ)I", (void*)native_ceph_close},
+  {"native_ceph_read", "(JJJ[BJ)J", (void*)native_ceph_read},
+  {"native_ceph_write", "(JJJ[BJ)J", (void*)native_ceph_write},
+  {"native_ceph_fsync", "(JJZ)I", (void*)native_ceph_fsync},
+};
+
+
