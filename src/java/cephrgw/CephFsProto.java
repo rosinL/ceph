@@ -20,12 +20,12 @@
  * As only the Ceph package should be using this directly, all methods
  * are protected.
  */
-package org.apache.hadoop.fs.ceph;
+package org.apache.hadoop.fs.cephrgw;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.InetAddress;
-import java.uitl.LinkedList;
+import java.util.LinkedList;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.conf.Configuration;
@@ -52,16 +52,8 @@ abstract class CephFsProto {
   abstract void shutdown() throws IOException;
   abstract boolean rename(Path src, Path dst) throws IOException;
   abstract short getDefaultReplication();
-  abstract short get_file_replication(Path path) throws IOException;
-  abstract int write(long fd, byte[] buf, long size, long offset) throws IOException;
-  abstract int read(long fd, byte[] buf, long size, long offset) throws IOException;
+  abstract int write(long fd, long offset, byte[] buf, long size) throws IOException;
+  abstract int read(long fd,, long offset byte[] buf, long size) throws IOException;
   abstract boolean mkdirs(Path path, int mode) throws IOException;
-  abstract int get_stripe_unit_granularity();
-  abstract String get_file_pool_name(long fd);
-  abstract int get_pool_id(String pool_name) throws IOException;;
-  abstract int get_pool_replication(int poolid) throws IOException;
-  abstract InetAddress get_osd_address(int osd) throws IOException;
-  abstract Bucket[] get_osd_crush_location(int osd) throws IOException;
-  abstract CephFileExtent get_file_extent(long fd, long offset) throws IOException;
   abstract void fsync(long fd) throws IOException;
 }

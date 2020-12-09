@@ -189,3 +189,157 @@ public class CephRgwAdapter {
    */
   private static native int native_ceph_release(long rgwFS);
 
+  public void statfs(String path, boolean isRoot, CephStatVFS statvfs) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      native_ceph_statfs(rgwFS, getParentFH(isRoot), path, statvfs);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_statfs(long rgwFS, long fh, String path, CephStatVFS statvfs);
+
+  abstract class ListDirHandler {
+    void listDirHandler(String name, int mode, int uid, int gid, long size, long blksize, long blocks, long mTime, long aTime) throws IOException {
+       CephStat stat = new CephStat(mode, uid, gid, size, blksize, blocks, mTime, aTime);
+       listDirCallback(name, stat);
+    }
+
+    abstract void listDirCallback(String name, CephStat stat) throws IOException;
+  }
+
+  public int listdir(String dir, boolean isRoot, LinkedList<String> nameList, LinkedList<CephStat> statList) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      int ret = native_ceph_listdir(rgwFS, getParentFH(isRoot), dir, new ListDirHandle() {
+        @Override
+        void listDirCallback(String name, CephStat stat) {
+          nameList.add(name);
+          statList.add(stat);
+        }
+      })
+      if (ret != 0) {
+        nameList.clear();
+        statList.clear();
+        return 0;
+      }
+      return nameList.size();
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_listdir(long rgwFS, long fh, String path, ListDirHandler handler);
+
+  public void unlink(String path, boolean isRoot) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      native_ceph_unlink(rgwFS, getParentFH(isRoot), path);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_unlink(long rgwFS, long fh, String path);
+
+  public int rename(String src_path, boolean srcIsRoot, String src_name, String dst_path, boolean dstIsRoot, String dst_name) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      return native_ceph_rename(rgwFS, getParentFH(srcIsRoot), src_path, src_name, getparentFH(dstIsRoot), dst_path, dst_name);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_rename(long rgwFS, long src_fd, String src_path, String src_name, long dst_fd, String dst_path, String dst_name);
+
+  public boolean mkdirs(String path, boolean isRoot, String name, int mode) throws IOException {
+    rlock.lock();
+    try {
+      return native_ceph_mkdirs(rgwFS, getParentFH(isRoot), path, name, mode);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native boolean native_ceph_mkdirs(long rgwFS, long fd, String path, String name, int mode);
+
+  public void lstat(String path, boolean isRoot, CephStat stat) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      native_ceph_lstat(rgwFS, getParentFH(isRoot), path, stat);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_lstat(long rgwFS, long fh, String path, CephStat stat);
+
+  public void setattr(String path, boolean isRoot, Cephstat stat, int mask) throws FileNotFoundException {
+    rlock.lock();
+    try {
+      native_ceph_setattr(rgwFS, getParentFH(isRoot), path, stat, mask);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_setattr(long rgwFS, long fh, String path, CephStat stat, int mask);  
+
+  public long open(String path, boolean isRoot, int flags, int mode)  throws FileNotFoundException {
+    rlock.lock();
+    try {
+      return native_ceph_open(rgwFS, getParentFH(isRoot), path, flags, mode);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native long native_ceph_open(long rgwFS, long fh, String path, int flags, int mode);
+
+  public void close(long fd) {
+    rlock.lock();
+    try {
+      native_ceph_close(rgwFS, fd);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_close(long rgwFS, long fd);
+
+  public long read(long fd, long offset, byte[] buf, long size) {
+    rlock.lock();
+    try {
+      return native_ceph_read(rgwFS, fd, offset, buf, size);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native long native_ceph_read(long rgwFS, long fd, long offset, byte[] buf, long size);
+
+  public long write(long fd, long offset, byte[] buf, long size) {
+    rlock.lock();
+    try {
+      return native_ceph_write(rgwFS, fd, offset, buf, size);
+    } finally {
+      rlock.unlock();
+    }
+  }
+  
+  private static native long native_ceph_write(long rgwFS, long fd, long offset, byte[] buf, long size);
+
+  public void fsync(long fd, boolean dataonly) {
+    rlock.lock();
+    try {
+      return native_ceph_fsync(rgwFS, fd, dataonly);
+    } finally {
+      rlock.unlock();
+    }
+  }
+  
+  private static native int native_ceph_fsync(long rgwFS, long fd, boolean dataonly);
+
+}
