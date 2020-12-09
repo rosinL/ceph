@@ -23,11 +23,11 @@ package com.ceph.rgw;
  * Holds struct statvfs fields.
  */
 public class CephStatVFS {
-  public long bsize;
-  public long frsize;
-  public long blocks;
-  public long bavail;
-  public long files;
-  public long fsid;
-  public long namemax;
+    public long bsize;
+    public long frsize;
+    public long blocks;
+    public long bavail;
+    public long files;
+    public long fsid;
+    public long namemax;
 }

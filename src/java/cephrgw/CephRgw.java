@@ -13,17 +13,17 @@ import java.net.URISyntaxException;
  * This impl delegates to the old FileSystem
  */
 public class CephRgw extends DelegateToFileSystem {
-  /**
-   * This constructor has the signature needed by
-   * {@link AbstractFileSystem#createFileSystem(URI, Configuration)}.
-   *
-   * @param theUri which must be that of localFs
-   * @param conf
-   * @throws IOException
-   * @throws URISyntaxException
-   */
-  CephRgw(final URI theUri, final Configuration conf) throws IOException,
-    URISyntaxException {
-    super(theUri, new CephRgwFileSystem(conf), conf, "cephrgw", true);
-  }
+    /**
+     * This constructor has the signature needed by
+     * {@link AbstractFileSystem#createFileSystem(URI, Configuration)}.
+     *
+     * @param theUri which must be that of localFs
+     * @param conf
+     * @throws IOException
+     * @throws URISyntaxException
+     */
+    CephRgw(final URI theUri, final Configuration conf) throws IOException,
+            URISyntaxException {
+        super(theUri, new CephRgwFileSystem(conf), conf, "cephrgw", true);
+    }
 }

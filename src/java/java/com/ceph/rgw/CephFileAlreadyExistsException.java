@@ -26,19 +26,19 @@ import java.io.IOException;
  */
 public class CephFileAlreadyExistsException extends IOException {
 
-  private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 1L;
 
-  /**
-   * Construct CephFileAlreadyExistsException.
-   */
-  public CephFileAlreadyExistsException() {
-    super();
-  }
+    /**
+     * Construct CephFileAlreadyExistsException.
+     */
+    public CephFileAlreadyExistsException() {
+        super();
+    }
 
-  /**
-   * Construct CephFileAlreadyExistsException with message.
-   */
-  public CephFileAlreadyExistsException(String s) {
-    super(s);
-  }
+    /**
+     * Construct CephFileAlreadyExistsException with message.
+     */
+    public CephFileAlreadyExistsException(String s) {
+        super(s);
+    }
 }
