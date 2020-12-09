@@ -28,7 +28,7 @@ import java.util.LinkedList;
 import java.lang.String;
 
 public class CephRgwAdapter {
-	private long rgwFs;
+	private long rgwFS;
 	private long rootFH;
 	private long bucketFH;
   /*
@@ -126,7 +126,7 @@ public class CephRgwAdapter {
         unmount();
       } catch (Exception e) {}
       try {
-        native_ceph_release(instance_ptr);
+        native_ceph_release(rgwFS);
       } catch (Exception e) {}
     }
     super.finalize();
@@ -137,12 +137,12 @@ public class CephRgwAdapter {
    *
    * @param id client id.
    */
-  public CephRgwAdapter(String id) {
-    native_ceph_create(this, id);
+  public CephRgwAdapter(String cephArgs) {
+    native_ceph_create(this, cephArgs);
     initialized = true;
   }
 
-  private static native int native_ceph_create(CephRgwAdapter mount, String id);
+  private static native int native_ceph_create(String cephArgs);
 
   /**
    * Create a new CephRgwAdapter with default client id.
@@ -151,21 +151,27 @@ public class CephRgwAdapter {
     this(null);
   }
 
+  private long getLookupFH(boolean isRoot) {
+    if (isRoot == false)
+	return bucketFH;
+    return rootFH;
+  }
+
   /**
    * Activate the mount with a given root path.
    *
    * @param root The path to use as the root (pass null for "/").
    */
-  public void mount(String root) {
+  public void mount(String uid, String access, String secret, String root) {
     wlock.lock();
     try {
-      native_ceph_mount(instance_ptr, root);
+      rgwFS = native_ceph_mount(this, uid, access, secret, root);
     } finally {
       wlock.unlock();
     }
   }
 
-  private static native int native_ceph_mount(long rgwFS, String root);
+  private static native long native_ceph_mount(CephRgwAdapter obj, String uid, String access, String secret, String root);
 
   /**
    * Deactivate the mount.
@@ -176,7 +182,7 @@ public class CephRgwAdapter {
   public void unmount() {
     wlock.lock();
     try {
-      native_ceph_unmount(instance_ptr);
+      native_ceph_unmount(rgwFS);
     } finally {
       wlock.unlock();
     }
@@ -192,7 +198,7 @@ public class CephRgwAdapter {
   public void statfs(String path, boolean isRoot, CephStatVFS statvfs) throws FileNotFoundException {
     rlock.lock();
     try {
-      native_ceph_statfs(rgwFS, getParentFH(isRoot), path, statvfs);
+      native_ceph_statfs(rgwFS, getLookupFH(isRoot), path, statvfs);
     } finally {
       rlock.unlock();
     }
@@ -212,7 +218,7 @@ public class CephRgwAdapter {
   public int listdir(String dir, boolean isRoot, LinkedList<String> nameList, LinkedList<CephStat> statList) throws FileNotFoundException {
     rlock.lock();
     try {
-      int ret = native_ceph_listdir(rgwFS, getParentFH(isRoot), dir, new ListDirHandle() {
+      int ret = native_ceph_listdir(rgwFS, getLookupFH(isRoot), dir, new ListDirHandler() {
         @Override
         void listDirCallback(String name, CephStat stat) {
           nameList.add(name);
@@ -235,7 +241,7 @@ public class CephRgwAdapter {
   public void unlink(String path, boolean isRoot) throws FileNotFoundException {
     rlock.lock();
     try {
-      native_ceph_unlink(rgwFS, getParentFH(isRoot), path);
+      native_ceph_unlink(rgwFS, getLookupFH(isRoot), path);
     } finally {
       rlock.unlock();
     }
@@ -246,7 +252,7 @@ public class CephRgwAdapter {
   public int rename(String src_path, boolean srcIsRoot, String src_name, String dst_path, boolean dstIsRoot, String dst_name) throws FileNotFoundException {
     rlock.lock();
     try {
-      return native_ceph_rename(rgwFS, getParentFH(srcIsRoot), src_path, src_name, getparentFH(dstIsRoot), dst_path, dst_name);
+      return native_ceph_rename(rgwFS, getLookupFH(srcIsRoot), src_path, src_name, getparentFH(dstIsRoot), dst_path, dst_name);
     } finally {
       rlock.unlock();
     }
@@ -257,7 +263,7 @@ public class CephRgwAdapter {
   public boolean mkdirs(String path, boolean isRoot, String name, int mode) throws IOException {
     rlock.lock();
     try {
-      return native_ceph_mkdirs(rgwFS, getParentFH(isRoot), path, name, mode);
+      return native_ceph_mkdirs(rgwFS, getLookupFH(isRoot), path, name, mode);
     } finally {
       rlock.unlock();
     }
@@ -268,7 +274,7 @@ public class CephRgwAdapter {
   public void lstat(String path, boolean isRoot, CephStat stat) throws FileNotFoundException {
     rlock.lock();
     try {
-      native_ceph_lstat(rgwFS, getParentFH(isRoot), path, stat);
+      native_ceph_lstat(rgwFS, getLookupFH(isRoot), path, stat);
     } finally {
       rlock.unlock();
     }
@@ -279,7 +285,7 @@ public class CephRgwAdapter {
   public void setattr(String path, boolean isRoot, Cephstat stat, int mask) throws FileNotFoundException {
     rlock.lock();
     try {
-      native_ceph_setattr(rgwFS, getParentFH(isRoot), path, stat, mask);
+      native_ceph_setattr(rgwFS, getLookupFH(isRoot), path, stat, mask);
     } finally {
       rlock.unlock();
     }
@@ -290,7 +296,7 @@ public class CephRgwAdapter {
   public long open(String path, boolean isRoot, int flags, int mode)  throws FileNotFoundException {
     rlock.lock();
     try {
-      return native_ceph_open(rgwFS, getParentFH(isRoot), path, flags, mode);
+      return native_ceph_open(rgwFS, getLookupFH(isRoot), path, flags, mode);
     } finally {
       rlock.unlock();
     }
@@ -334,7 +340,7 @@ public class CephRgwAdapter {
   public void fsync(long fd, boolean dataonly) {
     rlock.lock();
     try {
-      return native_ceph_fsync(rgwFS, fd, dataonly);
+      native_ceph_fsync(rgwFS, fd, dataonly);
     } finally {
       rlock.unlock();
     }
