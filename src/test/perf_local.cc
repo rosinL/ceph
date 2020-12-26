@@ -364,20 +364,33 @@ double cond_ping_pong()
 // probably pick worse values.
 double div32()
 {
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__aarch64__)
   int count = 1000000;
-  uint64_t start = Cycles::rdtsc();
-  // NB: Expect an x86 processor exception is there's overflow.
-  uint32_t numeratorHi = 0xa5a5a5a5U;
   uint32_t numeratorLo = 0x55aa55aaU;
   uint32_t divisor = 0xaa55aa55U;
   uint32_t quotient;
+#endif
+
+#if defined(__i386__) || defined(__x86_64__)
+  uint64_t start = Cycles::rdtsc();
+  // NB: Expect an x86 processor exception is there's overflow.
+  uint32_t numeratorHi = 0xa5a5a5a5U;
   uint32_t remainder;
   for (int i = 0; i < count; i++) {
     __asm__ __volatile__("div %4" :
                          "=a"(quotient), "=d"(remainder) :
                          "a"(numeratorLo), "d"(numeratorHi), "r"(divisor) :
                          "cc");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#elif defined(__aarch64__)
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("udiv %[q], %[n], %[d]" : 
+                          [q]"=r"(quotient) : 
+                          [n]"r"(numeratorLo), [d]"r"(divisor) :
+                          "cc"); 
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
@@ -392,20 +405,33 @@ double div32()
 // probably pick worse values.
 double div64()
 {
-#if defined(__x86_64__) || defined(__amd64__)
+#if defined(__x86_64__) || defined(__amd64__) || defined(__aarch64__)
   int count = 1000000;
-  // NB: Expect an x86 processor exception is there's overflow.
-  uint64_t start = Cycles::rdtsc();
-  uint64_t numeratorHi = 0x5a5a5a5a5a5UL;
   uint64_t numeratorLo = 0x55aa55aa55aa55aaUL;
   uint64_t divisor = 0xaa55aa55aa55aa55UL;
   uint64_t quotient;
+#endif
+
+#if defined(__x86_64__) || defined(__amd64__)
+  // NB: Expect an x86 processor exception is there's overflow.
+  uint64_t start = Cycles::rdtsc();
+  uint64_t numeratorHi = 0x5a5a5a5a5a5UL;
   uint64_t remainder;
   for (int i = 0; i < count; i++) {
     __asm__ __volatile__("divq %4" :
                          "=a"(quotient), "=d"(remainder) :
                          "a"(numeratorLo), "d"(numeratorHi), "r"(divisor) :
                          "cc");
+  }
+  uint64_t stop = Cycles::rdtsc();
+  return Cycles::to_seconds(stop - start)/count;
+#elif defined(__aarch64__)
+  uint64_t start = Cycles::rdtsc();
+  for (int i = 0; i < count; i++) {
+    __asm__ __volatile__("udiv %[q], %[n], %[d]" : 
+                          [q]"=r"(quotient) : 
+                          [n]"r"(numeratorLo), [d]"r"(divisor) :
+                          "cc");
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
