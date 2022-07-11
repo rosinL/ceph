@@ -19,18 +19,30 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/lba_manager.h"
 #include "crimson/os/seastore/cache.h"
-#include "crimson/os/seastore/segment_manager.h"
 
 #include "crimson/os/seastore/lba_manager/btree/lba_btree_node.h"
 #include "crimson/os/seastore/btree/btree_range_pin.h"
 
 namespace crimson::os::seastore::lba_manager::btree {
 
+class BtreeLBAPin : public BtreeNodePin<laddr_t, paddr_t> {
+public:
+  BtreeLBAPin() = default;
+  BtreeLBAPin(
+    CachedExtentRef parent,
+    lba_map_val_t &val,
+    lba_node_meta_t &&meta)
+    : BtreeNodePin(
+	parent,
+	val.paddr,
+	val.len,
+	std::forward<lba_node_meta_t>(meta))
+  {}
+};
+
 using LBABtree = FixedKVBtree<
   laddr_t, lba_map_val_t, LBAInternalNode,
-  LBALeafNode, LBA_BLOCK_SIZE>;
-
-using BtreeLBAPin = BtreeNodePin<laddr_t>;
+  LBALeafNode, BtreeLBAPin, LBA_BLOCK_SIZE>;
 
 /**
  * BtreeLBAManager
@@ -51,9 +63,7 @@ using BtreeLBAPin = BtreeNodePin<laddr_t>;
  */
 class BtreeLBAManager : public LBAManager {
 public:
-  BtreeLBAManager(
-    SegmentManager &segment_manager,
-    Cache &cache);
+  BtreeLBAManager(Cache &cache);
 
   mkfs_ret mkfs(
     Transaction &t) final;
@@ -89,7 +99,9 @@ public:
   }
 
   void complete_transaction(
-    Transaction &t) final;
+    Transaction &t,
+    std::vector<CachedExtentRef> &,
+    std::vector<CachedExtentRef> &) final;
 
   /**
    * init_cached_extent
@@ -138,7 +150,6 @@ public:
 
   ~BtreeLBAManager();
 private:
-  SegmentManager &segment_manager;
   Cache &cache;
 
   btree_pin_set_t<laddr_t> pin_set;

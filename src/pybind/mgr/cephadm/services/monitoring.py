@@ -131,6 +131,10 @@ class AlertmanagerService(CephadmService):
         default_webhook_urls: List[str] = []
 
         spec = cast(AlertManagerSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
+        try:
+            secure = spec.secure
+        except AttributeError:
+            secure = False
         user_data = spec.user_data
         if 'default_webhook_urls' in user_data and isinstance(
                 user_data['default_webhook_urls'], list):
@@ -144,7 +148,7 @@ class AlertmanagerService(CephadmService):
         proto = None  # http: or https:
         url = mgr_map.get('services', {}).get('dashboard', None)
         if url:
-            dashboard_urls.append(url)
+            dashboard_urls.append(url.rstrip('/'))
             p_result = urlparse(url)
             proto = p_result.scheme
             port = p_result.port
@@ -160,7 +164,7 @@ class AlertmanagerService(CephadmService):
                 continue
             assert dd.hostname is not None
             addr = self._inventory_get_fqdn(dd.hostname)
-            dashboard_urls.append(build_url(scheme=proto, host=addr, port=port))
+            dashboard_urls.append(build_url(scheme=proto, host=addr, port=port).rstrip('/'))
 
         for dd in self.mgr.cache.get_daemons_by_service('snmp-gateway'):
             assert dd.hostname is not None
@@ -175,6 +179,7 @@ class AlertmanagerService(CephadmService):
             'dashboard_urls': dashboard_urls,
             'default_webhook_urls': default_webhook_urls,
             'snmp_gateway_urls': snmp_gateway_urls,
+            'secure': secure,
         }
         yml = self.mgr.template.render('services/alertmanager/alertmanager.yml.j2', context)
 

@@ -197,9 +197,9 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
         flexGrow: 1
       },
       {
-        name: $localize`Services`,
-        prop: 'services',
-        flexGrow: 2,
+        name: $localize`Service Instances`,
+        prop: 'service_instances',
+        flexGrow: 1,
         cellTemplate: this.servicesTpl
       },
       {
@@ -474,7 +474,6 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
     } else {
       // mark host facts columns unavailable
       for (let column = 4; column < this.columns.length; column++) {
-        this.columns[column]['prop'] = '';
         this.columns[column]['cellTemplate'] = this.orchTmpl;
       }
     }
@@ -484,15 +483,6 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
     if (this.isLoadingHosts) {
       return;
     }
-    const typeToPermissionKey = {
-      mds: 'cephfs',
-      mon: 'monitor',
-      osd: 'osd',
-      rgw: 'rgw',
-      'rbd-mirror': 'rbdMirroring',
-      mgr: 'manager',
-      'tcmu-runner': 'iscsi'
-    };
     this.isLoadingHosts = true;
     this.sub = this.orchService
       .status()
@@ -504,11 +494,13 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
         }),
         map((hostList: object[]) =>
           hostList.map((host) => {
+            const counts = {};
+            host['service_instances'] = new Set<string>();
+            host['services'].forEach((service: any) => {
+              counts[service.type] = (counts[service.type] || 0) + 1;
+            });
             host['services'].map((service: any) => {
-              service.cdLink = `/perf_counters/${service.type}/${encodeURIComponent(service.id)}`;
-              const permission = this.permissions[typeToPermissionKey[service.type]];
-              service.canRead = permission ? permission.read : false;
-              return service;
+              host['service_instances'].add(`${service.type}: ${counts[service.type]}`);
             });
             return host;
           })

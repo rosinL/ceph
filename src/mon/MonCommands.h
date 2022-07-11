@@ -1016,6 +1016,7 @@ COMMAND("osd new "
         "Reads secrets from JSON file via `-i <file>` (see man page).",
         "osd", "rw")
 COMMAND("osd blocklist "
+	"name=range,type=CephString,goodchars=[range],req=false "
 	"name=blocklistop,type=CephChoices,strings=add|rm "
 	"name=addr,type=CephEntityAddr "
 	"name=expire,type=CephFloat,range=0.0,req=false",
@@ -1173,7 +1174,7 @@ COMMAND_WITH_FLAG("osd tier remove "
     FLAG(DEPRECATED))
 COMMAND("osd tier cache-mode "
 	"name=pool,type=CephPoolname "
-	"name=mode,type=CephChoices,strings=writeback|readproxy|readonly|none "
+	"name=mode,type=CephChoices,strings=writeback|proxy|readproxy|readonly|none "
 	"name=yes_i_really_mean_it,type=CephBool,req=false",
 	"specify the caching mode for cache tier <pool>", "osd", "rw")
 COMMAND("osd tier set-overlay "

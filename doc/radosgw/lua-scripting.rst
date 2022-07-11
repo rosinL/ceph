@@ -140,27 +140,27 @@ Request Fields
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.SwiftAccountName``                       | string   | swift account name                                           | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket``                                 | table    | info on the bucket                                           | no       | no        | yes      |
+| ``Request.Bucket``                                 | table    | info on the bucket                                           | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Tenant``                          | string   | tenant of the bucket                                         | no       | no        | no       |
+| ``Request.Bucket.Tenant``                          | string   | tenant of the bucket                                         | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.Name``                            | string   | bucket name                                                  | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Marker``                          | string   | bucket marker (initial id)                                   | no       | no        | no       |
+| ``Request.Bucket.Marker``                          | string   | bucket marker (initial id)                                   | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Id``                              | string   | bucket id                                                    | no       | no        | no       |
+| ``Request.Bucket.Id``                              | string   | bucket id                                                    | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Count``                           | integer  | number of objects in the bucket                              | no       | no        | no       |
+| ``Request.Bucket.Count``                           | integer  | number of objects in the bucket                              | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Size``                            | integer  | total size of objects in the bucket                          | no       | no        | no       |
+| ``Request.Bucket.Size``                            | integer  | total size of objects in the bucket                          | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.ZoneGroupId``                     | string   | zone group of the bucket                                     | no       | no        | no       |
+| ``Request.Bucket.ZoneGroupId``                     | string   | zone group of the bucket                                     | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.CreationTime``                    | time     | creation time of the bucket                                  | no       | no        | no       |
+| ``Request.Bucket.CreationTime``                    | time     | creation time of the bucket                                  | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.MTime``                           | time     | modification time of the bucket                              | no       | no        | no       |
+| ``Request.Bucket.MTime``                           | time     | modification time of the bucket                              | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.Quota``                           | table    | bucket quota                                                 | no       | no        | no       |
+| ``Request.Bucket.Quota``                           | table    | bucket quota                                                 | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.Quota.MaxSize``                   | integer  | bucket quota max size                                        | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
@@ -170,13 +170,13 @@ Request Fields
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.Quota.Rounded``                   | boolean  | bucket quota is rounded to 4K                                | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.PlacementRule``                   | table    | bucket placement rule                                        | no       | no        | no       |
+| ``Request.Bucket.PlacementRule``                   | table    | bucket placement rule                                        | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.PlacementRule.Name``              | string   | bucket placement rule name                                   | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.PlacementRule.StorageClass``      | string   | bucket placement rule storage class                          | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
-| ``Request.Bucket.User``                            | table    | bucket owner                                                 | no       | no        | no       |
+| ``Request.Bucket.User``                            | table    | bucket owner                                                 | no       | no        | yes      |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.Bucket.User.Tenant``                     | string   | bucket owner tenant                                          | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
@@ -289,6 +289,10 @@ Request Fields
 | ``Request.User.Tenant``                            | string   | triggering user tenant                                       | no       | no        | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 | ``Request.User.Id``                                | string   | triggering user id                                           | no       | no        | no       |
++----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
+| ``Request.Trace``                                  | table    | info on trace                                                | no       | no        | no       |
++----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
+| ``Request.Trace.Enable``                           | boolean  | tracing is enabled                                           | no       | yes       | no       |
 +----------------------------------------------------+----------+--------------------------------------------------------------+----------+-----------+----------+
 
 Request Functions
@@ -423,4 +427,27 @@ Then, do a restart for the radosgw and upload the following script to the `postR
     assert(s:send(json.encode(msg).."\n"))
     assert(s:close())
   end
+
+
+- Trace only requests of specific bucket
+
+Tracing is disabled by default, so we should enable tracing for this specific bucket
+
+.. code-block:: lua
+
+  if Request.Bucket.Name == "my-bucket" then
+      Request.Trace.Enable = true
+  end
+
+
+If `tracing is enabled <https://docs.ceph.com/en/latest/jaegertracing/#how-to-enable-tracing-in-ceph/>`_ on the RGW, the value of Request.Trace.Enable is true, so we should disable tracing for all other requests that do not match the bucket name.
+In the `preRequest` context:
+
+.. code-block:: lua
+
+  if Request.Bucket.Name ~= "my-bucket" then
+      Request.Trace.Enable = false
+  end
+
+Note that changing `Request.Trace.Enable` does not change the tracer's state, but disables or enables the tracing for the request only.
 

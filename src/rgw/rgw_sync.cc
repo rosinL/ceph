@@ -1394,8 +1394,6 @@ public:
   int state_store_mdlog_entries_complete();
 };
 
-#define META_SYNC_SPAWN_WINDOW 20
-
 class RGWMetaSyncShardCR : public RGWCoroutine {
   RGWMetaSyncEnv *sync_env;
 
@@ -1626,7 +1624,7 @@ public:
               pos_to_prev[marker] = marker;
             }
             // limit spawn window
-            while (num_spawned() > META_SYNC_SPAWN_WINDOW) {
+            while (num_spawned() > cct->_conf->rgw_meta_sync_spawn_window) {
               yield wait_for_child();
               collect_children();
             }
@@ -1761,13 +1759,13 @@ public:
           break;
         }
 #define INCREMENTAL_MAX_ENTRIES 100
-        ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " mdlog_marker=" << mdlog_marker << " sync_marker.marker=" << sync_marker.marker << " period_marker=" << period_marker << dendl;
+        ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " mdlog_marker=" << mdlog_marker << " sync_marker.marker=" << sync_marker.marker << " period_marker=" << period_marker << " truncated=" << truncated << dendl;
         if (!period_marker.empty() && period_marker <= mdlog_marker) {
           tn->log(10, SSTR("finished syncing current period: mdlog_marker=" << mdlog_marker << " sync_marker=" << sync_marker.marker << " period_marker=" << period_marker));
           done_with_period = true;
           break;
         }
-	if (mdlog_marker <= max_marker) {
+	if (mdlog_marker <= max_marker || !truncated) {
 	  /* we're at the tip, try to bring more entries */
           ldpp_dout(sync_env->dpp, 20) << __func__ << ":" << __LINE__ << ": shard_id=" << shard_id << " syncing mdlog for shard_id=" << shard_id << dendl;
           yield call(new RGWCloneMetaLogCoroutine(sync_env, mdlog,
@@ -1781,6 +1779,7 @@ public:
           *reset_backoff = false; // back off and try again later
           return retcode;
         }
+        truncated = true;
         *reset_backoff = true; /* if we got to this point, all systems function */
 	if (mdlog_marker > max_marker) {
           tn->set_flag(RGW_SNS_FLAG_ACTIVE); /* actually have entries to sync */
@@ -1824,7 +1823,7 @@ public:
                 pos_to_prev[log_iter->id] = marker;
               }
               // limit spawn window
-              while (num_spawned() > META_SYNC_SPAWN_WINDOW) {
+              while (num_spawned() > cct->_conf->rgw_meta_sync_spawn_window) {
                 yield wait_for_child();
                 collect_children();
               }
@@ -1841,8 +1840,7 @@ public:
         }
 	if (mdlog_marker == max_marker && can_adjust_marker) {
           tn->unset_flag(RGW_SNS_FLAG_ACTIVE);
-#define INCREMENTAL_INTERVAL 20
-	  yield wait(utime_t(INCREMENTAL_INTERVAL, 0));
+	  yield wait(utime_t(cct->_conf->rgw_meta_sync_poll_interval, 0));
 	}
       } while (can_adjust_marker);
 

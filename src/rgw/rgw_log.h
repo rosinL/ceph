@@ -10,8 +10,6 @@
 #include <vector>
 #include <fstream>
 
-#define dout_subsys ceph_subsys_rgw
-
 namespace rgw { namespace sal {
   class Store;
 } }
@@ -165,11 +163,10 @@ public:
 
 class OpsLogFile : public JsonOpsLogSink, public Thread, public DoutPrefixProvider {
   CephContext* cct;
-  ceph::mutex log_mutex = ceph::make_mutex("OpsLogFile_log");
-  ceph::mutex flush_mutex = ceph::make_mutex("OpsLogFile_flush");
+  ceph::mutex mutex = ceph::make_mutex("OpsLogFile");
   std::vector<bufferlist> log_buffer;
   std::vector<bufferlist> flush_buffer;
-  ceph::condition_variable cond_flush;
+  ceph::condition_variable cond;
   std::ofstream file;
   bool stopped;
   uint64_t data_size;
@@ -185,7 +182,7 @@ public:
   OpsLogFile(CephContext* cct, std::string& path, uint64_t max_data_size);
   ~OpsLogFile() override;
   CephContext *get_cct() const override { return cct; }
-  unsigned get_subsys() const override { return dout_subsys; }
+  unsigned get_subsys() const override;
   std::ostream& gen_prefix(std::ostream& out) const override { return out << "rgw OpsLogFile: "; }
   void reopen();
   void start();

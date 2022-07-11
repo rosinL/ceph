@@ -4297,7 +4297,7 @@ void *BlueStore::MempoolThread::entry()
     _resize_shards(interval_stats_trim);
     interval_stats_trim = false;
 
-    store->_update_cache_logger();
+    store->_update_logger();
     auto wait = ceph::make_timespan(
       store->cct->_conf->bluestore_cache_trim_interval);
     cond.wait_for(l, wait);
@@ -4412,15 +4412,20 @@ void BlueStore::MempoolThread::_update_cache_settings()
 #define dout_prefix *_dout << "bluestore.OmapIteratorImpl(" << this << ") "
 
 BlueStore::OmapIteratorImpl::OmapIteratorImpl(
-  CollectionRef c, OnodeRef o, KeyValueDB::Iterator it)
-  : c(c), o(o), it(it)
+  PerfCounters* _logger, CollectionRef c, OnodeRef o, KeyValueDB::Iterator it)
+  : logger(_logger), c(c), o(o), it(it)
 {
+  logger->inc(l_bluestore_omap_iterator_count);
   std::shared_lock l(c->lock);
   if (o->onode.has_omap()) {
     o->get_omap_key(string(), &head);
     o->get_omap_tail(&tail);
     it->lower_bound(head);
   }
+}
+BlueStore::OmapIteratorImpl::~OmapIteratorImpl()
+{
+  logger->dec(l_bluestore_omap_iterator_count);
 }
 
 string BlueStore::OmapIteratorImpl::_stringify() const
@@ -5238,7 +5243,15 @@ void BlueStore::_init_logger()
 		    "Sum for extents that have been merged due to garbage "
 		    "collection");
   //****************************************
-
+  // misc
+  //****************************************
+  b.add_u64_counter(l_bluestore_omap_iterator_count, "omap_iterator_count",
+    "Open omap iterators count");
+  b.add_u64_counter(l_bluestore_omap_rmkeys_count, "omap_rmkeys_count",
+    "amount of omap keys removed via rmkeys");
+  b.add_u64_counter(l_bluestore_omap_rmkey_ranges_count, "omap_rmkey_range_count",
+    "amount of omap key ranges removed via rmkeys");
+  //****************************************
   // other client ops latencies
   //****************************************
   b.add_time_avg(l_bluestore_omap_seek_to_first_lat, "omap_seek_to_first_lat",
@@ -6207,7 +6220,8 @@ int BlueStore::_open_bluefs(bool create, bool read_only)
     return r;
   }
   BlueFSVolumeSelector* vselector = nullptr;
-  if (bluefs_layout.shared_bdev == BlueFS::BDEV_SLOW) {
+  if (bluefs_layout.shared_bdev == BlueFS::BDEV_SLOW ||
+      cct->_conf->bluestore_volume_selection_policy == "use_some_extra_enforced") {
 
     string options = cct->_conf->bluestore_rocksdb_options;
     string options_annex = cct->_conf->bluestore_rocksdb_options_annex;
@@ -6245,7 +6259,8 @@ int BlueStore::_open_bluefs(bool create, bool read_only)
           rocks_opts.max_bytes_for_level_multiplier,
           reserved_factor,
           cct->_conf->bluestore_volume_selection_reserved,
-          cct->_conf->bluestore_volume_selection_policy == "use_some_extra");
+          cct->_conf->bluestore_volume_selection_policy.find("use_some_extra")
+             == 0);
     }    
   }
   if (create) {
@@ -6870,12 +6885,11 @@ int BlueStore::_setup_block_symlink_or_file(
 	return r;
       }
       // write the Transport ID of the NVMe device
-      // a transport id looks like: "trtype:PCIe traddr:0000:02:00.0"
+      // a transport id for PCIe looks like: "trtype:PCIe traddr:0000:02:00.0"
       // where "0000:02:00.0" is the selector of a PCI device, see
       // the first column of "lspci -mm -n -D"
-      string trid{"trtype:PCIe "};
-      trid += "traddr:";
-      trid += epath.substr(strlen(SPDK_PREFIX));
+      // a transport id for tcp looks like: "trype:TCP adrfam:IPv4 traddr:172.31.89.152 trsvcid:4420"
+      string trid = epath.substr(strlen(SPDK_PREFIX));
       r = ::write(fd, trid.c_str(), trid.size());
       ceph_assert(r == static_cast<int>(trid.size()));
       dout(1) << __func__ << " created " << name << " symlink to "
@@ -10580,7 +10594,7 @@ void BlueStore::_reap_collections()
   }
 }
 
-void BlueStore::_update_cache_logger()
+void BlueStore::_update_logger()
 {
   uint64_t num_onodes = 0;
   uint64_t num_pinned_onodes = 0;
@@ -11873,10 +11887,10 @@ int BlueStore::_onode_omap_get(
   o->flush();
   {
     const string& prefix = o->get_omap_prefix();
-    KeyValueDB::Iterator it = db->get_iterator(prefix);
     string head, tail;
     o->get_omap_header(&head);
     o->get_omap_tail(&tail);
+    KeyValueDB::Iterator it = db->get_iterator(prefix, 0, KeyValueDB::IteratorBounds{head, tail});
     it->lower_bound(head);
     while (it->valid()) {
       if (it->key() == head) {
@@ -11958,10 +11972,10 @@ int BlueStore::omap_get_keys(
   o->flush();
   {
     const string& prefix = o->get_omap_prefix();
-    KeyValueDB::Iterator it = db->get_iterator(prefix);
     string head, tail;
     o->get_omap_key(string(), &head);
     o->get_omap_tail(&tail);
+    KeyValueDB::Iterator it = db->get_iterator(prefix, 0, KeyValueDB::IteratorBounds{head, tail});
     it->lower_bound(head);
     while (it->valid()) {
       if (it->key() >= tail) {
@@ -12146,8 +12160,16 @@ ObjectMap::ObjectMapIterator BlueStore::get_omap_iterator(
   }
   o->flush();
   dout(10) << __func__ << " has_omap = " << (int)o->onode.has_omap() <<dendl;
-  KeyValueDB::Iterator it = db->get_iterator(o->get_omap_prefix());
-  return ObjectMap::ObjectMapIterator(new OmapIteratorImpl(c, o, it));
+  auto bounds = KeyValueDB::IteratorBounds();
+  if (o->onode.has_omap()) {
+    std::string lower_bound, upper_bound;
+    o->get_omap_key(string(), &lower_bound);
+    o->get_omap_tail(&upper_bound);
+    bounds.lower_bound = std::move(lower_bound);
+    bounds.upper_bound = std::move(upper_bound);
+  }
+  KeyValueDB::Iterator it = db->get_iterator(o->get_omap_prefix(), 0, std::move(bounds));
+  return ObjectMap::ObjectMapIterator(new OmapIteratorImpl(logger,c, o, it));
 }
 
 // -----------------
@@ -16528,7 +16550,6 @@ int BlueStore::_omap_rmkeys(TransContext *txc,
   auto p = bl.cbegin();
   __u32 num;
   string final_key;
-
   if (!o->onode.has_omap()) {
     goto out;
   }
@@ -16537,6 +16558,7 @@ int BlueStore::_omap_rmkeys(TransContext *txc,
     o->get_omap_key(string(), &final_key);
     size_t base_key_len = final_key.size();
     decode(num, p);
+    logger->inc(l_bluestore_omap_rmkeys_count, num);
     while (num--) {
       string key;
       decode(key, p);
@@ -16570,6 +16592,7 @@ int BlueStore::_omap_rmkey_range(TransContext *txc,
     o->flush();
     o->get_omap_key(first, &key_first);
     o->get_omap_key(last, &key_last);
+    logger->inc(l_bluestore_omap_rmkey_ranges_count);
     txc->t->rm_range_keys(prefix, key_first, key_last);
     dout(20) << __func__ << " remove range start: "
              << pretty_binary_string(key_first) << " end: "
@@ -16578,7 +16601,6 @@ int BlueStore::_omap_rmkey_range(TransContext *txc,
   txc->note_modified_object(o);
 
  out:
-  dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
 
@@ -16659,10 +16681,10 @@ int BlueStore::_clone(TransContext *txc,
     // otherwise rewrite_omap_key will corrupt data
     ceph_assert(oldo->onode.flags == newo->onode.flags);
     const string& prefix = newo->get_omap_prefix();
-    KeyValueDB::Iterator it = db->get_iterator(prefix);
     string head, tail;
     oldo->get_omap_header(&head);
     oldo->get_omap_tail(&tail);
+    KeyValueDB::Iterator it = db->get_iterator(prefix, 0, KeyValueDB::IteratorBounds{head, tail});
     it->lower_bound(head);
     while (it->valid()) {
       if (it->key() >= tail) {
@@ -18267,7 +18289,7 @@ int BlueStore::copy_allocator(Allocator* src_alloc, Allocator* dest_alloc, uint6
   auto count_entries = [&](uint64_t extent_offset, uint64_t extent_length) {
     (*p_num_entries)++;
   };
-  src_alloc->dump(count_entries);
+  src_alloc->foreach(count_entries);
 
   dout(5) << "count num_entries=" << *p_num_entries << dendl;
 
@@ -18293,7 +18315,7 @@ int BlueStore::copy_allocator(Allocator* src_alloc, Allocator* dest_alloc, uint6
       derr << "zero length extent!!! offset=" << extent_offset << ", index=" << idx << dendl;
     }
   };
-  src_alloc->dump(copy_entries);
+  src_alloc->foreach(copy_entries);
 
   dout(5) << "copy num_entries=" << idx << dendl;
   if (idx > *p_num_entries) {
@@ -18400,7 +18422,7 @@ int BlueStore::store_allocator(Allocator* src_allocator)
       p_curr = buffer; // recycle the buffer
     }
   };
-  allocator->dump(iterated_allocation);
+  allocator->foreach(iterated_allocation);
   // if got null extent -> fail the operation
   if (ret != 0) {
     derr << "Illegal extent, fail store operation" << dendl;
@@ -18546,7 +18568,7 @@ int BlueStore::__restore_allocator(Allocator* allocator, uint64_t *num, uint64_t
   uint64_t        extent_count       = 0;
   uint64_t        extents_bytes_left = file_size - (header_size + trailer_size + sizeof(crc));
   while (extents_bytes_left) {
-    int req_bytes  = std::min(extents_bytes_left, sizeof(buffer));
+    int req_bytes  = std::min(extents_bytes_left, static_cast<uint64_t>(sizeof(buffer)));
     int read_bytes = bluefs->read(p_handle.get(), offset, req_bytes, nullptr, (char*)buffer);
     if (read_bytes != req_bytes) {
       derr << "Failed bluefs->read()::read_bytes=" << read_bytes << ", req_bytes=" << req_bytes << dendl;
@@ -19001,8 +19023,8 @@ int BlueStore::compare_allocators(Allocator* alloc1, Allocator* alloc2, uint64_t
     }
   };
 
-  alloc1->dump(iterated_mapper1);
-  alloc2->dump(iterated_mapper2);
+  alloc1->foreach(iterated_mapper1);
+  alloc2->foreach(iterated_mapper2);
 
   qsort(arr1.get(), std::min(idx1, extent_count), sizeof(extent_t), cmpfunc);
   qsort(arr2.get(), std::min(idx2, extent_count), sizeof(extent_t), cmpfunc);
@@ -19098,7 +19120,7 @@ int BlueStore::read_allocation_from_drive_for_bluestore_tool()
     auto count_entries = [&](uint64_t extent_offset, uint64_t extent_length) {
       stats.insert_count++;
     };
-    allocator->dump(count_entries);
+    allocator->foreach(count_entries);
     ret = compare_allocators(allocator.get(), alloc, stats.insert_count, memory_target);
     if (ret == 0) {
       dout(5) << "Allocator drive - file integrity check OK" << dendl;
@@ -19164,7 +19186,7 @@ void BlueStore::copy_allocator_content_to_fm(Allocator *allocator, FreelistManag
       txn = db->get_transaction();
     }
   };
-  allocator->dump(iterated_insert);
+  allocator->foreach(iterated_insert);
   if (idx % max_txn != 0) {
     db->submit_transaction_sync(txn);
   }
@@ -19238,7 +19260,7 @@ int BlueStore::verify_rocksdb_allocations(Allocator *allocator)
   auto count_entries = [&](uint64_t extent_offset, uint64_t extent_length) {
     insert_count++;
   };
-  temp_allocator->dump(count_entries);
+  temp_allocator->foreach(count_entries);
   uint64_t memory_target = cct->_conf.get_val<Option::size_t>("osd_memory_target");
   int ret = compare_allocators(allocator, temp_allocator, insert_count, memory_target);
 

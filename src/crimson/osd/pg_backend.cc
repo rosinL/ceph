@@ -61,10 +61,11 @@ PGBackend::create(pg_t pgid,
 
 PGBackend::PGBackend(shard_id_t shard,
                      CollectionRef coll,
-                     crimson::os::FuturizedStore* store)
+                     crimson::osd::ShardServices &shard_services)
   : shard{shard},
     coll{coll},
-    store{store}
+    shard_services{shard_services},
+    store{&shard_services.get_store()}
 {}
 
 PGBackend::load_metadata_iertr::future
@@ -492,7 +493,7 @@ static bool is_offset_and_length_valid(
   }
 }
 
-PGBackend::interruptible_future<> PGBackend::write(
+PGBackend::write_iertr::future<> PGBackend::write(
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& txn,
@@ -503,6 +504,14 @@ PGBackend::interruptible_future<> PGBackend::write(
   uint64_t offset = op.extent.offset;
   uint64_t length = op.extent.length;
   bufferlist buf = osd_op.indata;
+  if (op.extent.length != osd_op.indata.length()) {
+    return crimson::ct_error::invarg::make();
+  }
+
+  if (!is_offset_and_length_valid(op.extent.offset, op.extent.length)) {
+    return crimson::ct_error::file_too_large::make();
+  }
+
   if (auto seq = os.oi.truncate_seq;
       seq != 0 && op.extent.truncate_seq < seq) {
     // old write, arrived after trimtrunc
@@ -587,7 +596,7 @@ PGBackend::interruptible_future<> PGBackend::write_same(
   return seastar::now();
 }
 
-PGBackend::interruptible_future<> PGBackend::writefull(
+PGBackend::write_iertr::future<> PGBackend::writefull(
   ObjectState& os,
   const OSDOp& osd_op,
   ceph::os::Transaction& txn,
@@ -596,7 +605,10 @@ PGBackend::interruptible_future<> PGBackend::writefull(
 {
   const ceph_osd_op& op = osd_op.op;
   if (op.extent.length != osd_op.indata.length()) {
-    throw crimson::osd::invalid_argument();
+    return crimson::ct_error::invarg::make();
+  }
+  if (!is_offset_and_length_valid(op.extent.offset, op.extent.length)) {
+    return crimson::ct_error::file_too_large::make();
   }
 
   const bool existing = maybe_create_new_object(os, txn, delta_stats);
@@ -721,7 +733,7 @@ PGBackend::write_iertr::future<> PGBackend::zero(
   return write_ertr::now();
 }
 
-PGBackend::interruptible_future<> PGBackend::create(
+PGBackend::create_iertr::future<> PGBackend::create(
   ObjectState& os,
   const OSDOp& osd_op,
   ceph::os::Transaction& txn,
@@ -730,7 +742,7 @@ PGBackend::interruptible_future<> PGBackend::create(
   if (os.exists && !os.oi.is_whiteout() &&
       (osd_op.op.flags & CEPH_OSD_OP_FLAG_EXCL)) {
     // this is an exclusive create
-    throw crimson::osd::make_error(-EEXIST);
+    return crimson::ct_error::eexist::make();
   }
 
   if (osd_op.indata.length()) {
@@ -740,7 +752,7 @@ PGBackend::interruptible_future<> PGBackend::create(
       std::string category;
       decode(category, p);
     } catch (buffer::error&) {
-      throw crimson::osd::invalid_argument();
+      return crimson::ct_error::invarg::make();
     }
   }
   maybe_create_new_object(os, txn, delta_stats);
@@ -821,7 +833,7 @@ PGBackend::list_objects(const hobject_t& start, uint64_t limit) const
     });
 }
 
-PGBackend::interruptible_future<> PGBackend::setxattr(
+PGBackend::setxattr_ierrorator::future<> PGBackend::setxattr(
   ObjectState& os,
   const OSDOp& osd_op,
   ceph::os::Transaction& txn,
@@ -829,13 +841,13 @@ PGBackend::interruptible_future<> PGBackend::setxattr(
 {
   if (local_conf()->osd_max_attr_size > 0 &&
       osd_op.op.xattr.value_len > local_conf()->osd_max_attr_size) {
-    throw crimson::osd::make_error(-EFBIG);
+    return crimson::ct_error::file_too_large::make();
   }
 
   const auto max_name_len = std::min<uint64_t>(
     store->get_max_attr_name_length(), local_conf()->osd_max_attr_name_len);
   if (osd_op.op.xattr.name_len > max_name_len) {
-    throw crimson::osd::make_error(-ENAMETOOLONG);
+    return crimson::ct_error::enametoolong::make();
   }
 
   maybe_create_new_object(os, txn, delta_stats);
@@ -980,7 +992,10 @@ PGBackend::cmp_xattr_ierrorator::future<> PGBackend::cmp_xattr(
  
   logger().debug("cmpxattr on obj={} for attr={}", os.oi.soid, name);
   return getxattr(os.oi.soid, std::move(name)).safe_then_interruptible(
-    [&delta_stats, &osd_op] (auto &&xattr) {
+    [&delta_stats, &osd_op] (auto &&xattr) -> cmp_xattr_ierrorator::future<> {
+    delta_stats.num_rd++;
+    delta_stats.num_rd_kb += shift_round_up(osd_op.op.xattr.value_len, 10);
+
     int result = 0;
     auto bp = osd_op.indata.cbegin();
     bp += osd_op.op.xattr.name_len;
@@ -1014,13 +1029,22 @@ PGBackend::cmp_xattr_ierrorator::future<> PGBackend::cmp_xattr(
     }
     if (result == 0) {
       logger().info("cmp_xattr: comparison returned false");
-      osd_op.rval = -ECANCELED;
+      return crimson::ct_error::ecanceled::make();
+    } else if (result == -EINVAL) {
+      return crimson::ct_error::invarg::make();
     } else {
-      osd_op.rval = result;
+      osd_op.rval = 1;
+      return cmp_xattr_ierrorator::now();
     }
-    delta_stats.num_rd++;
-    delta_stats.num_rd_kb += shift_round_up(osd_op.op.xattr.value_len, 10);
-  });
+  }).handle_error_interruptible(
+    crimson::ct_error::enodata::handle([&delta_stats, &osd_op] ()
+      ->cmp_xattr_errorator::future<> {
+      delta_stats.num_rd++;
+      delta_stats.num_rd_kb += shift_round_up(osd_op.op.xattr.value_len, 10);
+      return crimson::ct_error::ecanceled::make();
+    }),
+    cmp_xattr_errorator::pass_further{}
+  );
 }
 
 PGBackend::rm_xattr_iertr::future<>
@@ -1087,7 +1111,13 @@ PGBackend::omap_get_header(
   const crimson::os::CollectionRef& c,
   const ghobject_t& oid) const
 {
-  return store->omap_get_header(c, oid);
+  return store->omap_get_header(c, oid)
+    .handle_error(
+      crimson::ct_error::enodata::handle([] {
+	return seastar::make_ready_future<bufferlist>();
+      }),
+      ll_read_errorator::pass_further{}
+    );
 }
 
 PGBackend::ll_read_ierrorator::future<>

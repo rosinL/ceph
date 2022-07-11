@@ -353,7 +353,7 @@ public:
    * If @a cb returns a negative error code, stop and return that.
    */
   int readdir_r_cb(dir_result_t *dirp, add_dirent_cb_t cb, void *p,
-		   unsigned want=0, unsigned flags=AT_NO_ATTR_SYNC,
+		   unsigned want=0, unsigned flags=AT_STATX_DONT_SYNC,
 		   bool getref=false);
 
   struct dirent * readdir(dir_result_t *d);
@@ -897,6 +897,7 @@ public:
   std::unique_ptr<MDSMap> mdsmap;
 
   bool fuse_default_permissions;
+  bool _collect_and_send_global_metrics;
 
 protected:
   /* Flags for check_caps() */
@@ -1389,8 +1390,7 @@ private:
   int _flock(Fh *fh, int cmd, uint64_t owner);
   int _lazyio(Fh *fh, int enable);
 
-  int get_or_create(Inode *dir, const char* name,
-		    Dentry **pdn, bool expect_null=false);
+  Dentry *get_or_create(Inode *dir, const char* name);
 
   int xattr_permission(Inode *in, const char *name, unsigned want,
 		       const UserPerm& perms);

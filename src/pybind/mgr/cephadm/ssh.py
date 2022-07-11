@@ -58,7 +58,7 @@ class SSHManager:
                                  host: str,
                                  addr: Optional[str] = None,
                                  ) -> "SSHClientConnection":
-        if not self.cons.get(host):
+        if not self.cons.get(host) or host not in self.mgr.inventory:
             if not addr and host in self.mgr.inventory:
                 addr = self.mgr.inventory.get_addr(host)
 
@@ -136,7 +136,8 @@ class SSHManager:
                                addr: Optional[str] = None,
                                ) -> Tuple[str, str, int]:
         conn = await self._remote_connection(host, addr)
-        cmd = "sudo " + " ".join(quote(x) for x in cmd)
+        sudo_prefix = "sudo " if self.mgr.ssh_user != 'root' else ""
+        cmd = sudo_prefix + " ".join(quote(x) for x in cmd)
         logger.debug(f'Running command: {cmd}')
         try:
             r = await conn.run('sudo true', check=True, timeout=5)
@@ -209,11 +210,7 @@ class SSHManager:
             await self._check_execute_command(host, ['mkdir', '-p', '/tmp' + dirname], addr=addr)
             tmp_path = '/tmp' + path + '.new'
             await self._check_execute_command(host, ['touch', tmp_path], addr=addr)
-            if uid is not None and gid is not None and mode is not None:
-                # shlex quote takes str or byte object, not int
-                await self._check_execute_command(host, ['chown', '-R', str(uid) + ':' + str(gid), tmp_path], addr=addr)
-                await self._check_execute_command(host, ['chmod', oct(mode)[2:], tmp_path], addr=addr)
-            elif self.mgr.ssh_user != 'root':
+            if self.mgr.ssh_user != 'root':
                 assert self.mgr.ssh_user
                 await self._check_execute_command(host, ['chown', '-R', self.mgr.ssh_user, tmp_path], addr=addr)
                 await self._check_execute_command(host, ['chmod', str(644), tmp_path], addr=addr)
@@ -223,6 +220,10 @@ class SSHManager:
                 f.flush()
                 conn = await self._remote_connection(host, addr)
                 await asyncssh.scp(f.name, (conn, tmp_path))
+            if uid is not None and gid is not None and mode is not None:
+                # shlex quote takes str or byte object, not int
+                await self._check_execute_command(host, ['chown', '-R', str(uid) + ':' + str(gid), tmp_path], addr=addr)
+                await self._check_execute_command(host, ['chmod', oct(mode)[2:], tmp_path], addr=addr)
             await self._check_execute_command(host, ['mv', tmp_path, path], addr=addr)
         except Exception as e:
             msg = f"Unable to write {host}:{path}: {e}"

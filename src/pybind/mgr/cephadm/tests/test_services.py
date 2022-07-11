@@ -251,6 +251,9 @@ class TestMonitoring:
 
                 global:
                   resolve_timeout: 5m
+                  http_config:
+                    tls_config:
+                      insecure_skip_verify: true
 
                 route:
                   receiver: 'default'
@@ -450,6 +453,8 @@ class TestMonitoring:
                           cert_key = /etc/grafana/certs/cert_key
                           http_port = 3000
                           http_addr = 
+                        [snapshots]
+                          external_enabled = false
                         [security]
                           disable_initial_admin_creation = true
                           cookie_secure = true
@@ -528,6 +533,8 @@ class TestMonitoring:
                                     '  cert_key = /etc/grafana/certs/cert_key\n'
                                     '  http_port = 3000\n'
                                     '  http_addr = \n'
+                                    '[snapshots]\n'
+                                    '  external_enabled = false\n'
                                     '[security]\n'
                                     '  admin_user = admin\n'
                                     '  admin_password = secure\n'
