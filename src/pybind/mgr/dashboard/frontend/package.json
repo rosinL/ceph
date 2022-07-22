@@ -128,7 +128,7 @@
     "cypress-axe": "0.14.0",
     "cypress-cucumber-preprocessor": "4.3.1",
     "cypress-iframe": "1.0.1",
-    "cypress-multi-reporters": "1.5.0",
+    "cypress-multi-reporters": "1.6.1",
     "gherkin-lint": "4.2.2",
     "html-linter": "1.1.1",
     "htmllint-cli": "0.0.7",
