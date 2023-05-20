@@ -5,6 +5,7 @@
 int ceph_arch_neon = 0;
 int ceph_arch_aarch64_crc32 = 0;
 int ceph_arch_aarch64_pmull = 0;
+int ceph_arch_sve = 0;
 
 #include <stdio.h>
 
@@ -30,6 +31,7 @@ int ceph_arch_arm_probe(void)
 	ceph_arch_neon = (hwcap & HWCAP_ASIMD) == HWCAP_ASIMD;
 	ceph_arch_aarch64_crc32 = (hwcap & HWCAP_CRC32) == HWCAP_CRC32;
 	ceph_arch_aarch64_pmull = (hwcap & HWCAP_PMULL) == HWCAP_PMULL;
+	ceph_arch_sve = (hwcap & HWCAP_SVE) == HWCAP_SVE;
 #endif
 #endif // __linux__
 	return 0;

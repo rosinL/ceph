@@ -59,6 +59,39 @@ if(HAVE_NASM_X64_AVX2)
     ErasureCodePluginIsa.cc
     xor_op.cc
   )
+elseif(HAVE_ARMV8_SVE)
+  set(isa_srcs
+    ${isal_src_dir}/erasure_code/ec_base.c
+    ${isal_src_dir}/erasure_code/aarch64/ec_aarch64_highlevel_func.c
+    ${isal_src_dir}/erasure_code/aarch64/ec_aarch64_dispatcher.c
+    ${isal_src_dir}/erasure_code/aarch64/gf_2vect_dot_prod_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_2vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_3vect_dot_prod_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_3vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_4vect_dot_prod_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_4vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_5vect_dot_prod_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_5vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_6vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_vect_dot_prod_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_vect_mad_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/gf_vect_mul_neon.S
+    ${isal_src_dir}/erasure_code/aarch64/ec_multibinary_arm.S
+    ErasureCodeIsa.cc
+    ErasureCodeIsaTableCache.cc
+    ErasureCodePluginIsa.cc
+    xor_op.cc
+  )
+
+  set_source_files_properties(
+    ${isal_src_dir}/erasure_code/aarch64/ec_multibinary_arm.S
+    PROPERTIES COMPILE_FLAGS "-D__ASSEMBLY__"
+  )
+
+  set_source_files_properties(
+    xor_op.cc
+    PROPERTIES COMPILE_FLAGS "-march=armv8-a+sve"
+  )
 elseif(HAVE_ARMV8_SIMD)
   set(isa_srcs
     ${isal_src_dir}/erasure_code/ec_base.c

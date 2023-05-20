@@ -93,4 +93,14 @@ region_neon_xor(char** src    /* array of 64-byte aligned source pointer to xor 
                 int src_size  /* size of the source pointer array */,
                 unsigned size /* size of the region to xor */);
 
+// -------------------------------------------------------------------------
+// compute region XOR like parity = src[0] ^ src[1] ... ^ src[src_size-1]
+// using arm sve operations
+// -------------------------------------------------------------------------
+void
+region_sve_xor(char** src    /* array source pointer to xor */,
+               char* parity  /* output pointer containing the parity */,
+               int src_size  /* size of the source pointer array */,
+               unsigned size /* size of the region to xor */);
+
 #endif // EC_ISA_XOR_OP_H

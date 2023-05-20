@@ -16,12 +16,15 @@
 #include <string.h>
 #include "arch/intel.h"
 #include "arch/arm.h"
+#include "include/ceph_assert.h"
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
   #include <arm_neon.h>
 #endif
 
-#include "include/ceph_assert.h"
+#if defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+  #include <arm_sve.h>
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -106,7 +109,16 @@ region_xor(unsigned char** src,
       // 64-byte region xor
       region_sse2_xor((char**) src, (char*) parity, src_size, region_size);
     } else
-#elif defined (__aarch64__) && defined(__ARM_NEON)
+#else
+#if defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+  if (ceph_arch_sve) {
+    // -------------------------------------------------------------------------
+    // sve is a variable-length instruction set, so need not to be aligned first
+    // -------------------------------------------------------------------------
+    region_sve_xor((char **) src, (char *) parity, src_size, size);
+  } else 
+#endif // __ARM_FEATURE_SVE
+#if defined (__aarch64__) && defined(__ARM_NEON)
     if (ceph_arch_neon) {
       // -----------------------------
       // use NEON region xor function
@@ -116,6 +128,7 @@ region_xor(unsigned char** src,
       size_left -= region_size;
       region_neon_xor((char**) src, (char *) parity, src_size, region_size);
     } else
+#endif // __ARM_NEON
 #endif
     {
       // --------------------------------------------
@@ -233,5 +246,43 @@ region_neon_xor(char **src,
     p += EC_ISA_VECTOR_NEON_WORDSIZE;
   }
 #endif // __aarch64__ && __ARM_NEON
+  return;
+}
+
+#if defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+unsigned get_sve_length_by_bytes() {
+  return svcntb();
+}
+#endif
+
+void
+// -----------------------------------------------------------------------------
+region_sve_xor(char **src,
+               char *parity,
+               int src_size,
+               unsigned size)
+// -----------------------------------------------------------------------------
+{
+#if defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+  unsigned char *p = (unsigned char *)parity;
+  unsigned char *vbuf[256] = { NULL };
+
+  for (int v = 0; v < src_size; v++) {
+    vbuf[v] = (unsigned char *)src[v];
+  }
+
+  const unsigned sve_vec_length = get_sve_length_by_bytes();
+  for (unsigned i = 0; i < size; i += sve_vec_length) {
+    svbool_t pg = svwhilelt_b8_u32(i, size);
+    svuint8_t d0 = svld1_u8(pg, &(vbuf[0][i]));
+    for (int d = 1; d < src_size; d++) {
+      svuint8_t di = svld1_u8(pg, &(vbuf[d][i]));
+      d0 = sveor_u8_z(pg, d0, di);
+    }
+
+    svst1_u8(pg, p, d0);
+    p += sve_vec_length;
+  }
+#endif // __aarch64__ && __ARM_FEATURE_SVE
   return;
 }

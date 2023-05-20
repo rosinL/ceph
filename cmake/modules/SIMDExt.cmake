@@ -47,6 +47,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|AARCH64")
     set(SIMD_COMPILE_FLAGS "${SIMD_COMPILE_FLAGS} -march=armv8-a+simd")
   endif()
 
+  CHECK_C_COMPILER_FLAG(-march=armv8-a+sve HAVE_ARMV8_SVE)
+  if (HAVE_ARMV8_SVE)
+    set(SIMD_COMPILE_FLAGS "${SIMD_COMPILE_FLAGS} -march=armv8-a+sve")
+    MESSAGE( STATUS "this var key = ${SIMD_COMPILE_FLAGS}.")
+  endif()
+
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM")
   set(HAVE_ARM 1)
   CHECK_C_COMPILER_FLAG(-mfpu=neon HAVE_ARM_NEON)
