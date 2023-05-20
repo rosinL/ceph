@@ -88,7 +88,7 @@ region_sse2_xor(char** src /* array of 64-byte aligned source pointer to xor */,
 // using NEON 32-byte operations
 // -------------------------------------------------------------------------
 void
-region_neon_xor(char** src    /* array of 64-byte aligned source pointer to xor */,
+region_neon_xor(char** src    /* array of 32-byte aligned source pointer to xor */,
                 char* parity  /* 32-byte aligned output pointer containing the parity */,
                 int src_size  /* size of the source pointer array */,
                 unsigned size /* size of the region to xor */);
